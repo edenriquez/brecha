@@ -2,8 +2,9 @@
 
 import dynamic from "next/dynamic";
 
-/** RouteMap sin SSR y en su propio chunk: maplibre solo se baja cuando el mapa se pinta. */
-export const RouteMap = dynamic(() => import("./route-map").then((m) => m.RouteMap), {
-  ssr: false,
-  loading: () => <div className="absolute inset-0 bg-[#e3e8e1]" />,
-});
+const placeholder = () => <div className="absolute inset-0 bg-[#e3e8e1]" />;
+
+/** Mapas sin SSR y en su propio chunk: maplibre solo se baja cuando el mapa se pinta. */
+export const RouteMap = dynamic(() => import("./route-map").then((m) => m.RouteMap), { ssr: false, loading: placeholder });
+
+export const StartPointMap = dynamic(() => import("./start-point-map").then((m) => m.StartPointMap), { ssr: false, loading: placeholder });

@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef } from "react";
-import { DEM_TILES, MAP_STYLE, maplibregl } from "@/lib/maplibre";
+import { addHillshade, MAP_STYLE, maplibregl } from "@/lib/maplibre";
 import { DIFFICULTY, formatKm, type RouteSummary } from "@/lib/routes";
 
 const PILL = "flex items-center gap-1.5 rounded-full border py-1 px-2.5 font-headline text-xs font-bold shadow-sm transition-transform";
@@ -53,14 +53,7 @@ export function RouteMap({
       attributionControl: { compact: true },
     });
     map.addControl(new maplibregl.NavigationControl({ showCompass: false }), "bottom-right");
-    map.once("load", () => {
-      map.addSource("dem", { type: "raster-dem", tiles: [DEM_TILES], encoding: "terrarium", tileSize: 256, maxzoom: 14, attribution: "Elevación: Mapzen, AWS Terrain Tiles" });
-      const firstLabel = map.getStyle().layers?.find((l) => l.type === "symbol")?.id;
-      map.addLayer(
-        { id: "hillshade", type: "hillshade", source: "dem", paint: { "hillshade-exaggeration": 0.35, "hillshade-shadow-color": "#5b5b52", "hillshade-highlight-color": "#ffffff", "hillshade-accent-color": "#8a8a7a" } },
-        firstLabel,
-      );
-    });
+    map.once("load", () => addHillshade(map));
     map.on("error", (e: { error?: { message?: string } }) => console.error("maplibre:", e.error?.message ?? e));
 
     const registry = markers.current;
