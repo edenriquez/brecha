@@ -1,30 +1,28 @@
 import Link from "next/link";
-import { Mountain, Search } from "lucide-react";
+import { Mountain } from "lucide-react";
+import { SearchBox } from "@/components/search-box";
 import { UserMenu } from "@/components/user-menu";
 
-export function TopNav() {
+/** `search`: el explorador pasa su buscador en vivo; en las demás páginas buscar lleva al mapa. */
+export function TopNav({ search }: { search?: React.ReactNode }) {
   return (
     <header className="sticky top-0 z-50 flex-none border-b border-outline-variant bg-surface shadow-sm">
-      <div className="flex h-16 w-full items-center justify-between px-4 sm:px-6 lg:px-8">
-        <div className="flex items-center gap-6">
-          <Link href="/" className="flex items-center gap-2 font-headline text-2xl font-bold tracking-tight text-primary">
+      <div className="flex h-16 w-full items-center justify-between gap-3 px-4 sm:px-6 lg:px-8">
+        <div className="flex min-w-0 flex-1 items-center gap-3 sm:gap-6">
+          <Link href="/" aria-label="brecha" className="flex shrink-0 items-center gap-2 font-headline text-2xl font-bold tracking-tight text-primary">
             <Mountain className="size-7 fill-primary-container text-primary-container" aria-hidden />
-            brecha
+            <span className="hidden sm:inline">brecha</span>
           </Link>
-          <div className="hidden w-80 items-center rounded-full border border-outline-variant bg-surface-container-lowest px-4 py-1.5 shadow-sm lg:flex">
-            <Search className="mr-2.5 size-5 text-primary" aria-hidden />
-            <div className="flex flex-col text-left">
-              <span className="font-headline text-xs font-semibold leading-tight">¿A dónde quieres caminar?</span>
-              <span className="text-[11px] leading-tight text-on-surface-variant">Busca un cerro, parque o municipio</span>
-            </div>
-          </div>
+          {search ?? <SearchBox />}
         </div>
-        <nav className="hidden items-center gap-7 md:flex">
+        <nav className="hidden shrink-0 items-center gap-7 md:flex">
           <Link href="/" className="flex items-center gap-1.5 border-b-2 border-primary pb-1 font-semibold text-primary">
             Mapa
           </Link>
         </nav>
-        <UserMenu />
+        <div className="shrink-0">
+          <UserMenu />
+        </div>
       </div>
     </header>
   );

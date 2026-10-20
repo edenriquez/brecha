@@ -24,6 +24,20 @@ function paintPill(el: HTMLElement, route: RouteSummary, selected: boolean) {
   el.innerHTML = pillHtml(route, selected);
 }
 
+function frame(
+  map: maplibregl.Map,
+  bounds: maplibregl.LngLatBounds,
+  pending: { current: maplibregl.LngLatBounds | null },
+  animate: boolean,
+) {
+  if (!map.getContainer().clientWidth) {
+    pending.current = bounds;
+    return;
+  }
+  pending.current = null;
+  map.fitBounds(bounds, { padding: 80, maxZoom: 11, duration: animate ? 600 : 0 });
+}
+
 export function RouteMap({
   routes,
   selectedId,
@@ -38,26 +52,51 @@ export function RouteMap({
   const markers = useRef(new Map<string, { marker: maplibregl.Marker; el: HTMLSpanElement; route: RouteSummary }>());
   const selectedRef = useRef(selectedId);
   const onSelectRef = useRef(onSelect);
+  const framedKey = useRef<string | null>(null);
+  const pendingFrame = useRef<maplibregl.LngLatBounds | null>(null);
   useEffect(() => {
     onSelectRef.current = onSelect;
   }, [onSelect]);
 
   useEffect(() => {
     if (!container.current) return;
-    const bounds = new maplibregl.LngLatBounds();
-    routes.forEach((r) => bounds.extend([r.lng, r.lat]));
     const map = new maplibregl.Map({
       container: container.current,
       style: MAP_STYLE,
-      ...(routes.length ? { bounds, fitBoundsOptions: { padding: 80, maxZoom: 11 } } : { center: [-99.13, 19.43], zoom: 8 }),
+      center: [-99.13, 19.43],
+      zoom: 8,
       attributionControl: { compact: true },
     });
     map.addControl(new maplibregl.NavigationControl({ showCompass: false }), "bottom-right");
     map.once("load", () => addHillshade(map));
     map.on("error", (e: { error?: { message?: string } }) => console.error("maplibre:", e.error?.message ?? e));
+    // en móvil el mapa vive oculto (0×0) mientras se ve la lista: se encuadra al mostrarse
+    map.on("resize", () => {
+      if (pendingFrame.current) frame(map, pendingFrame.current, pendingFrame, false);
+    });
+    mapRef.current = map;
+    framedKey.current = null;
 
     const registry = markers.current;
+    return () => {
+      registry.clear();
+      map.remove();
+      mapRef.current = null;
+    };
+  }, []);
+
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map) return;
+    const registry = markers.current;
+    const ids = new Set(routes.map((r) => r.id));
+    registry.forEach(({ marker }, id) => {
+      if (ids.has(id)) return;
+      marker.remove();
+      registry.delete(id);
+    });
     routes.forEach((route) => {
+      if (registry.has(route.id)) return;
       // el className del botón es de maplibre (maplibregl-marker lo posiciona); el estilo va en el span
       const button = document.createElement("button");
       button.type = "button";
@@ -69,13 +108,13 @@ export function RouteMap({
       const marker = new maplibregl.Marker({ element: button, anchor: "bottom" }).setLngLat([route.lng, route.lat]).addTo(map);
       registry.set(route.id, { marker, el, route });
     });
-    mapRef.current = map;
 
-    return () => {
-      registry.clear();
-      map.remove();
-      mapRef.current = null;
-    };
+    const key = [...ids].sort().join();
+    if (!routes.length || key === framedKey.current) return;
+    const bounds = new maplibregl.LngLatBounds();
+    routes.forEach((r) => bounds.extend([r.lng, r.lat]));
+    frame(map, bounds, pendingFrame, framedKey.current !== null);
+    framedKey.current = key;
   }, [routes]);
 
   useEffect(() => {
@@ -86,7 +125,9 @@ export function RouteMap({
       marker.getElement().style.zIndex = selected ? "10" : "";
       if (selected) {
         const map = mapRef.current;
-        if (map && !map.getBounds().contains(marker.getLngLat())) map.easeTo({ center: marker.getLngLat(), duration: 600 });
+        if (map?.getContainer().clientWidth && !map.getBounds().contains(marker.getLngLat())) {
+          map.easeTo({ center: marker.getLngLat(), duration: 600 });
+        }
       }
     });
   }, [selectedId]);
