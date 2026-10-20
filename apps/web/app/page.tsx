@@ -1,5 +1,4 @@
 import { Explorer } from "@/components/explorer";
-import { TopNav } from "@/components/top-nav";
 import { listAllUpcomingOutings } from "@/lib/outings.server";
 import { listRoutes } from "@/lib/routes.server";
 
@@ -9,8 +8,7 @@ export const revalidate = 300;
 export default async function Home() {
   const [routes, outings] = await Promise.all([listRoutes(), listAllUpcomingOutings()]);
   return (
-    <div className="flex h-screen flex-col overflow-hidden">
-      <TopNav />
+    <div className="flex h-dvh flex-col overflow-hidden">
       <Explorer routes={routes} outings={outings} />
     </div>
   );
