@@ -4,17 +4,26 @@ import { useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import clsx from "clsx";
 import { Bike, CalendarDays, CarFront, CircleCheck, Footprints, Navigation, Route } from "lucide-react";
+import { OutingCard } from "@/components/outing-card";
 import { RouteCard } from "@/components/route-card";
 import { RouteMap } from "@/components/route-map-lazy";
 import { DIFFICULTY, type Difficulty, type RouteSummary } from "@/lib/routes";
+import type { OutingCardData } from "@/lib/outings";
 
 const FILTERS: (Difficulty | "todo")[] = ["todo", "facil", "moderada", "dificil"];
 
-export function Explorer({ routes }: { routes: RouteSummary[] }) {
+export function Explorer({ routes, outings }: { routes: RouteSummary[]; outings: OutingCardData[] }) {
+  const [tab, setTab] = useState<"rutas" | "salidas">("rutas");
   const [filter, setFilter] = useState<Difficulty | "todo">("todo");
+  // en ambas pestañas la selección es una ruta: es lo que tiene pin en el mapa
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const visible = useMemo(() => (filter === "todo" ? routes : routes.filter((r) => r.difficulty === filter)), [routes, filter]);
-  const upcoming = routes.reduce((n, r) => n + r.upcoming_outings, 0);
+  const visibleOutings = useMemo(() => (filter === "todo" ? outings : outings.filter((o) => o.route.difficulty === filter)), [outings, filter]);
+  const mapRoutes = useMemo(() => {
+    if (tab === "rutas") return visible;
+    const withOutings = new Set(visibleOutings.map((o) => o.route.id));
+    return visible.filter((r) => withOutings.has(r.id));
+  }, [tab, visible, visibleOutings]);
   const router = useRouter();
 
   // primer clic en un pin lo selecciona; el segundo abre la ruta
@@ -38,20 +47,16 @@ export function Explorer({ routes }: { routes: RouteSummary[] }) {
           <ActivityTile icon={<CarFront className="size-6" />} title="Offroad" subtitle="Rutas 4x4 y brechas" />
         </div>
 
-        <div className="mb-4 flex items-center rounded-full border border-outline-variant/50 bg-surface-container p-1">
-          <span className="flex flex-1 items-center justify-center gap-1.5 rounded-full bg-primary px-4 py-1.5 font-headline text-xs font-bold text-on-primary shadow-sm">
+        <div role="tablist" className="mb-4 flex items-center rounded-full border border-outline-variant/50 bg-surface-container p-1">
+          <Tab active={tab === "rutas"} onClick={() => setTab("rutas")}>
             <Route className="size-4" aria-hidden />
             Rutas
-          </span>
-          <span className="flex flex-1 items-center justify-center gap-1.5 px-4 py-1.5 font-headline text-xs font-semibold text-outline" title="Pronto podrás convocar y unirte a salidas">
+          </Tab>
+          <Tab active={tab === "salidas"} onClick={() => setTab("salidas")}>
             <CalendarDays className="size-4" aria-hidden />
             Salidas próximas
-            {upcoming > 0 ? (
-              <span className="rounded-full bg-secondary px-1.5 text-[10px] font-bold text-on-secondary">{upcoming}</span>
-            ) : (
-              <span className="rounded bg-surface-container-high px-1.5 text-[10px] font-medium">Pronto</span>
-            )}
-          </span>
+            {outings.length > 0 && <span className="rounded-full bg-secondary px-1.5 text-[10px] font-bold text-on-secondary">{outings.length}</span>}
+          </Tab>
         </div>
 
         <div className="no-scrollbar mb-5 flex items-center gap-2 overflow-x-auto py-1">
@@ -74,25 +79,47 @@ export function Explorer({ routes }: { routes: RouteSummary[] }) {
           ))}
         </div>
 
-        <h2 className="mb-4 font-headline text-base font-bold">
-          {visible.length === 1 ? "1 ruta popular en la región" : `${visible.length} rutas populares en la región`}
-        </h2>
-
-        {visible.length ? (
-          <div className="grid grid-cols-1 gap-4 pb-10 sm:grid-cols-2 xl:grid-cols-3">
-            {visible.map((route, i) => (
-              <RouteCard key={route.id} route={route} priority={i < 3} selected={route.id === selectedId} onSelect={() => setSelectedId(route.id)} />
-            ))}
-          </div>
+        {tab === "rutas" ? (
+          <>
+            <h2 className="mb-4 font-headline text-base font-bold">
+              {visible.length === 1 ? "1 ruta popular en la región" : `${visible.length} rutas populares en la región`}
+            </h2>
+            {visible.length ? (
+              <div className="grid grid-cols-1 gap-4 pb-10 sm:grid-cols-2 xl:grid-cols-3">
+                {visible.map((route, i) => (
+                  <RouteCard key={route.id} route={route} priority={i < 3} selected={route.id === selectedId} onSelect={() => setSelectedId(route.id)} />
+                ))}
+              </div>
+            ) : (
+              <Empty>Todavía no hay rutas con este filtro.</Empty>
+            )}
+          </>
         ) : (
-          <p className="rounded-xl border border-dashed border-outline-variant p-8 text-center text-sm text-on-surface-variant">
-            Todavía no hay rutas con este filtro.
-          </p>
+          <>
+            <h2 className="mb-4 font-headline text-base font-bold">
+              {visibleOutings.length === 1 ? "1 salida próxima" : `${visibleOutings.length} salidas próximas`}
+            </h2>
+            {visibleOutings.length ? (
+              <div className="grid grid-cols-1 gap-4 pb-10 sm:grid-cols-2">
+                {visibleOutings.map((outing) => (
+                  <OutingCard key={outing.id} outing={outing} selected={outing.route.id === selectedId} onSelect={() => setSelectedId(outing.route.id)} />
+                ))}
+              </div>
+            ) : (
+              <Empty>
+                Nadie ha convocado una salida {filter === "todo" ? "todavía" : "con este filtro"}.{" "}
+                <button type="button" onClick={() => setTab("rutas")} className="font-semibold text-primary underline-offset-2 hover:underline">
+                  Elige una ruta
+                </button>{" "}
+                y convoca la primera.
+              </Empty>
+            )}
+          </>
         )}
       </section>
 
       <section className="relative hidden h-full w-[42%] overflow-hidden border-l border-outline-variant/50 bg-[#e3e8e1] lg:block">
-        <RouteMap routes={visible} selectedId={selectedId} onSelect={selectOrOpen} />
+        <RouteMap routes={mapRoutes} selectedId={selectedId} onSelect={selectOrOpen} />
       </section>
     </main>
   );
@@ -119,4 +146,25 @@ function ActivityTile({ icon, title, subtitle, active }: { icon: React.ReactNode
       <p className={clsx("text-xs", active ? "text-on-surface-variant" : "text-outline")}>{subtitle}</p>
     </div>
   );
+}
+
+function Tab({ active, onClick, children }: { active: boolean; onClick: () => void; children: React.ReactNode }) {
+  return (
+    <button
+      type="button"
+      role="tab"
+      aria-selected={active}
+      onClick={onClick}
+      className={clsx(
+        "flex flex-1 items-center justify-center gap-1.5 rounded-full px-4 py-1.5 font-headline text-xs transition-colors",
+        active ? "bg-primary font-bold text-on-primary shadow-sm" : "font-semibold text-on-surface-variant hover:text-primary",
+      )}
+    >
+      {children}
+    </button>
+  );
+}
+
+function Empty({ children }: { children: React.ReactNode }) {
+  return <p className="rounded-xl border border-dashed border-outline-variant p-8 text-center text-sm text-on-surface-variant">{children}</p>;
 }

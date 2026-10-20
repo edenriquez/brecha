@@ -7,17 +7,10 @@ import { ArrowLeftRight, CalendarPlus, Clock, Map as MapIcon, MapPin, Megaphone,
 import { StartPointMap } from "@/components/route-map-lazy";
 import { ShareButton } from "@/components/share-button";
 import { TopNav } from "@/components/top-nav";
-import {
-  DIFFICULTY,
-  formatDuration,
-  formatKm,
-  googleMapsDirections,
-  outingDateParts,
-  ROUTE_TYPE,
-  spotsLabel,
-  type OutingSummary,
-} from "@/lib/routes";
-import { getRoute, listUpcomingOutings } from "@/lib/routes.server";
+import { DIFFICULTY, formatDuration, formatKm, googleMapsDirections, ROUTE_TYPE } from "@/lib/routes";
+import { outingDateParts, spotsLabel, type OutingSummary } from "@/lib/outings";
+import { listUpcomingOutings } from "@/lib/outings.server";
+import { getRoute } from "@/lib/routes.server";
 
 export const revalidate = 300;
 
@@ -157,14 +150,14 @@ export default async function RoutePage({ params }: Props) {
                 <h3 className="font-headline text-base font-bold">¿No encuentras una fecha?</h3>
                 <p className="mt-1 text-xs text-on-surface-variant">Organiza tu propio grupo y los senderistas locales se unirán</p>
               </div>
-              <span
-                aria-disabled
-                className="flex w-full cursor-not-allowed items-center justify-center gap-2 rounded-xl bg-secondary/60 px-4 py-3 font-headline text-sm font-bold text-on-secondary"
+              <Link
+                href={`/rutas/${route.slug}/convocar`}
+                className="flex w-full items-center justify-center gap-2 rounded-xl bg-secondary px-4 py-3 font-headline text-sm font-bold text-on-secondary shadow-md transition-all hover:bg-on-secondary-container active:scale-95"
               >
                 <CalendarPlus className="size-5" aria-hidden />
                 Convocar una salida
-              </span>
-              <p className="text-[11px] text-outline">Muy pronto: gratis y organizado por la comunidad</p>
+              </Link>
+              <p className="text-[11px] text-outline">Es gratis y lo organiza la comunidad</p>
             </div>
           </aside>
         </div>
@@ -205,7 +198,11 @@ function UpcomingOutings({ outings }: { outings: OutingSummary[] }) {
             const date = outingDateParts(o.starts_at);
             const full = o.members >= o.capacity;
             return (
-              <li key={o.id} className="space-y-2.5 rounded-xl border border-outline-variant/60 bg-surface-container-low/40 p-3.5">
+              <li key={o.id}>
+                <Link
+                  href={`/salidas/${o.id}`}
+                  className="block space-y-2.5 rounded-xl border border-outline-variant/60 bg-surface-container-low/40 p-3.5 transition-colors hover:border-primary-container"
+                >
                 <div className="flex items-start gap-3">
                   <div className="shrink-0 rounded-xl border border-outline-variant/60 bg-surface-container-lowest px-2.5 py-1.5 text-center">
                     <p className="text-[10px] font-bold text-secondary uppercase">{date.weekday}</p>
@@ -229,6 +226,7 @@ function UpcomingOutings({ outings }: { outings: OutingSummary[] }) {
                     {o.members}/{o.capacity} senderistas
                   </p>
                 </div>
+                </Link>
               </li>
             );
           })}
