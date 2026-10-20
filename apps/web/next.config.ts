@@ -8,6 +8,8 @@ const nextConfig: NextConfig = {
     remotePatterns: [
       { protocol: "http", hostname: "127.0.0.1", port: "54371" },
       { protocol: "https", hostname: "*.supabase.co" },
+      // fotos de perfil de quienes entran con Google
+      { protocol: "https", hostname: "lh3.googleusercontent.com" },
     ],
   },
 };
