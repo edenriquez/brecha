@@ -1,0 +1,43 @@
+# Migraciones de Supabase por GitOps: PR → lint y reset limpio; main → db push al proyecto.
+# Secrets del environment "production": SUPABASE_ACCESS_TOKEN, SUPABASE_PROJECT_ID, SUPABASE_DB_PASSWORD.
+name: supabase
+
+on:
+  pull_request:
+    paths: ["supabase/**"]
+  push:
+    branches: [main]
+    paths: ["supabase/**"]
+  workflow_dispatch:
+
+concurrency:
+  group: supabase-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  check:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: supabase/setup-cli@v1
+        with: { version: latest }
+      - run: supabase db start
+      # solo public: PostGIS (en extensions) trae avisos propios de plpgsql_check
+      - run: supabase db lint --schema public --level warning --fail-on warning
+      - name: verificar que las migraciones aplican limpias
+        run: supabase db reset
+
+  push:
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    environment: production
+    env:
+      SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+      SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: supabase/setup-cli@v1
+        with: { version: latest }
+      - run: supabase link --project-ref "${{ secrets.SUPABASE_PROJECT_ID }}"
+      - run: supabase db push

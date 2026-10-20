@@ -1,0 +1,2 @@
+-- Datos solo para desarrollo local (supabase db reset). Las rutas iniciales viven en migrations/
+-- porque también tienen que llegar a producción.

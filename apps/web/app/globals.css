@@ -1,0 +1,62 @@
+@import "tailwindcss";
+
+/* Tokens del design system "Brecha" en Stitch */
+@theme {
+  --font-headline: var(--font-jakarta), ui-sans-serif, system-ui, sans-serif;
+  --font-body: var(--font-inter), ui-sans-serif, system-ui, sans-serif;
+
+  --color-primary: #164525;
+  --color-on-primary: #ffffff;
+  --color-primary-container: #2f5d3a;
+  --color-primary-fixed: #bbefc1;
+  --color-on-primary-fixed-variant: #22502e;
+
+  --color-secondary: #a53c00;
+  --color-on-secondary: #ffffff;
+  --color-secondary-container: #ff7a3d;
+  --color-on-secondary-container: #642100;
+  --color-secondary-fixed: #ffdbce;
+
+  --color-tertiary: #513717;
+  --color-tertiary-container: #6b4e2c;
+
+  --color-surface: #fcf9f2;
+  --color-surface-container-lowest: #ffffff;
+  --color-surface-container-low: #f6f3ec;
+  --color-surface-container: #f1eee7;
+  --color-surface-container-high: #ebe8e1;
+  --color-on-surface: #1c1c18;
+  --color-on-surface-variant: #414941;
+  --color-outline: #717970;
+  --color-outline-variant: #c1c9be;
+  --color-error: #ba1a1a;
+
+  --color-facil: #3a9d5d;
+  --color-moderada: #e0a526;
+  --color-dificil: #d64545;
+  --color-experto: #1c1c1a;
+}
+
+html,
+body {
+  height: 100%;
+}
+
+body {
+  background: var(--color-surface);
+  color: var(--color-on-surface);
+  font-family: var(--font-body);
+  -webkit-font-smoothing: antialiased;
+}
+
+.no-scrollbar {
+  scrollbar-width: none;
+}
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+
+/* el marcador de MapLibre no debe heredar el cursor de arrastre del mapa */
+.maplibregl-marker {
+  cursor: pointer;
+}
