@@ -1,4 +1,5 @@
 import Image from "next/image";
+import Link from "next/link";
 import clsx from "clsx";
 import { MapPin, Mountain } from "lucide-react";
 import { DIFFICULTY, formatDuration, formatKm, outingsLabel, type RouteSummary } from "@/lib/routes";
@@ -16,10 +17,10 @@ export function RouteCard({
 }) {
   const difficulty = DIFFICULTY[route.difficulty];
   return (
-    <article
+    <Link
+      href={`/rutas/${route.slug}`}
       onMouseEnter={onSelect}
       onFocus={onSelect}
-      tabIndex={0}
       className={clsx(
         "group flex flex-col overflow-hidden rounded-xl bg-surface-container-lowest transition-all hover:shadow-md focus:outline-none",
         selected
@@ -78,6 +79,6 @@ export function RouteCard({
           )}
         </div>
       </div>
-    </article>
+    </Link>
   );
 }

@@ -1,6 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
+import { useRouter } from "next/navigation";
 import clsx from "clsx";
 import { Bike, CalendarDays, CarFront, CircleCheck, Footprints, Navigation, Route } from "lucide-react";
 import { RouteCard } from "@/components/route-card";
@@ -14,6 +15,14 @@ export function Explorer({ routes }: { routes: RouteSummary[] }) {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const visible = useMemo(() => (filter === "todo" ? routes : routes.filter((r) => r.difficulty === filter)), [routes, filter]);
   const upcoming = routes.reduce((n, r) => n + r.upcoming_outings, 0);
+  const router = useRouter();
+
+  // primer clic en un pin lo selecciona; el segundo abre la ruta
+  function selectOrOpen(id: string) {
+    if (id !== selectedId) return setSelectedId(id);
+    const route = routes.find((r) => r.id === id);
+    if (route) router.push(`/rutas/${route.slug}`);
+  }
 
   return (
     <main className="flex flex-1 overflow-hidden">
@@ -83,7 +92,7 @@ export function Explorer({ routes }: { routes: RouteSummary[] }) {
       </section>
 
       <section className="relative hidden h-full w-[42%] overflow-hidden border-l border-outline-variant/50 bg-[#e3e8e1] lg:block">
-        <RouteMap routes={visible} selectedId={selectedId} onSelect={setSelectedId} />
+        <RouteMap routes={visible} selectedId={selectedId} onSelect={selectOrOpen} />
       </section>
     </main>
   );
