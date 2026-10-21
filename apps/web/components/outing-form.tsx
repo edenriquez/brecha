@@ -6,24 +6,58 @@ import clsx from "clsx";
 import { CheckCircle2, Mountain, Send } from "lucide-react";
 import { Avatar } from "@/components/avatar";
 import { OutingCard } from "@/components/outing-card";
-import { createOuting, type ActionState } from "@/app/salidas/actions";
-import { DIFFICULTY, formatDuration, formatKm, type RouteDetail } from "@/lib/routes";
-import { LEVEL, mexicoCityISO, PACE, todayInMexicoCity, type OutingLevel, type OutingPace, type Person } from "@/lib/outings";
+import { createOuting, updateOuting, type ActionState } from "@/app/salidas/actions";
+import { DIFFICULTY, formatDuration, formatKm } from "@/lib/routes";
+import { LEVEL, mexicoCityISO, PACE, todayInMexicoCity, type OutingLevel, type OutingPace, type OutingRoute, type Person } from "@/lib/outings";
 
 const input =
   "w-full rounded-lg border border-outline bg-surface-container-lowest px-3.5 py-2.5 text-sm font-medium focus:border-primary focus:ring-2 focus:ring-primary/30 focus:outline-none";
 const label = "mb-1.5 block font-headline text-sm font-bold";
 
-export function OutingForm({ route, organizer }: { route: RouteDetail; organizer: Pick<Person, "display_name" | "avatar_url"> }) {
-  const [state, formAction, pending] = useActionState<ActionState, FormData>(createOuting.bind(null, { id: route.id, slug: route.slug }), { error: null });
-  const [title, setTitle] = useState("");
-  const [date, setDate] = useState("");
-  const [time, setTime] = useState("07:00");
-  const [meetingPoint, setMeetingPoint] = useState("");
-  const [capacity, setCapacity] = useState(12);
-  const [level, setLevel] = useState<OutingLevel>("intermedio");
-  const [pace, setPace] = useState<OutingPace>("moderado");
-  const [notes, setNotes] = useState("");
+export type OutingFields = {
+  title: string;
+  date: string;
+  time: string;
+  meeting_point_label: string;
+  capacity: number;
+  level: OutingLevel;
+  pace: OutingPace;
+  notes: string;
+};
+
+const NEW_OUTING: OutingFields = {
+  title: "",
+  date: "",
+  time: "07:00",
+  meeting_point_label: "",
+  capacity: 12,
+  level: "intermedio",
+  pace: "moderado",
+  notes: "",
+};
+
+/** Sin `editing` convoca una salida nueva; con él edita una existente (el cupo no baja de los inscritos). */
+export function OutingForm({
+  route,
+  organizer,
+  editing,
+}: {
+  route: OutingRoute;
+  organizer: Pick<Person, "display_name" | "avatar_url">;
+  editing?: { id: string; members: number; fields: OutingFields };
+}) {
+  const action = editing ? updateOuting.bind(null, { id: editing.id, slug: route.slug }) : createOuting.bind(null, { id: route.id, slug: route.slug });
+  const [state, formAction, pending] = useActionState<ActionState, FormData>(action, { error: null });
+  const initial = editing?.fields ?? NEW_OUTING;
+  const [title, setTitle] = useState(initial.title);
+  const [date, setDate] = useState(initial.date);
+  const [time, setTime] = useState(initial.time);
+  const [meetingPoint, setMeetingPoint] = useState(initial.meeting_point_label);
+  const [capacity, setCapacity] = useState(initial.capacity);
+  const [level, setLevel] = useState<OutingLevel>(initial.level);
+  const [pace, setPace] = useState<OutingPace>(initial.pace);
+  const [notes, setNotes] = useState(initial.notes);
+  const members = editing?.members ?? 1;
   const today = todayInMexicoCity();
   const difficulty = DIFFICULTY[route.difficulty];
 
@@ -106,12 +140,15 @@ export function OutingForm({ route, organizer }: { route: RouteDetail; organizer
               name="capacity"
               type="number"
               required
-              min={2}
+              min={Math.max(2, members)}
               max={100}
               value={capacity}
               onChange={(e) => setCapacity(Number(e.target.value))}
               className={clsx(input, "max-w-32")}
             />
+            {editing && members > 1 && (
+              <p className="mt-1.5 text-xs text-on-surface-variant">Ya hay {members} personas inscritas: el cupo no puede ser menor.</p>
+            )}
           </div>
 
           <div>
@@ -132,13 +169,21 @@ export function OutingForm({ route, organizer }: { route: RouteDetail; organizer
         </section>
 
         <div className="flex flex-col items-stretch gap-3 rounded-xl border border-outline-variant bg-surface-container-lowest p-4 shadow-sm sm:flex-row sm:items-center sm:justify-between">
-          <p className="text-xs text-on-surface-variant">{state.error ? <span className="font-semibold text-error">{state.error}</span> : "Ocuparás el primer lugar del cupo."}</p>
+          <p className="text-xs text-on-surface-variant">
+            {state.error ? (
+              <span className="font-semibold text-error">{state.error}</span>
+            ) : editing ? (
+              "Quienes ya se unieron verán los cambios en la salida."
+            ) : (
+              "Ocuparás el primer lugar del cupo."
+            )}
+          </p>
           <button
             disabled={pending}
             className="flex items-center justify-center gap-2 rounded-lg bg-secondary-container px-5 py-2.5 font-headline text-sm font-bold text-on-secondary shadow-sm transition-colors hover:bg-secondary disabled:opacity-60"
           >
             <Send className="size-4" aria-hidden />
-            {pending ? "Publicando…" : "Publicar salida"}
+            {editing ? (pending ? "Guardando…" : "Guardar cambios") : pending ? "Publicando…" : "Publicar salida"}
           </button>
         </div>
       </form>
@@ -160,7 +205,7 @@ export function OutingForm({ route, organizer }: { route: RouteDetail; organizer
               starts_at: date ? mexicoCityISO(date, time || "07:00") : new Date().toISOString(),
               meeting_point_label: meetingPoint,
               capacity: capacity || 2,
-              members: 1,
+              members,
               route,
             }}
           />

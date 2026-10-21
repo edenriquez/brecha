@@ -10,12 +10,18 @@ export function OutingCard({
   selected,
   onSelect,
   preview,
+  tag,
+  muted,
 }: {
   outing: OutingCardData;
   selected?: boolean;
   onSelect?: () => void;
   /** Vista previa del formulario: sin enlace y sin hover */
   preview?: boolean;
+  /** Etiqueta en la esquina de la foto, p. ej. "Organizas" o "Cancelada" */
+  tag?: { label: string; tone: "primary" | "neutral" | "error" };
+  /** Salidas pasadas o canceladas */
+  muted?: boolean;
 }) {
   const { route } = outing;
   const date = outingDateParts(outing.starts_at);
@@ -24,6 +30,7 @@ export function OutingCard({
   const className = clsx(
     "group flex flex-col overflow-hidden rounded-xl bg-surface-container-lowest transition-all",
     !preview && "hover:shadow-md focus:outline-none",
+    muted && "opacity-70 grayscale-[40%] hover:opacity-100 hover:grayscale-0",
     selected ? "border-2 border-primary-container shadow-sm ring-2 ring-primary-container/20" : "border border-outline-variant/60 shadow-xs",
   );
 
@@ -41,6 +48,18 @@ export function OutingCard({
           <span className={clsx("size-1.5 rounded-full", difficulty.dot)} />
           {difficulty.label}
         </span>
+        {tag && (
+          <span
+            className={clsx(
+              "absolute top-2.5 right-2.5 rounded-full px-2.5 py-0.5 text-[11px] font-bold shadow-xs",
+              tag.tone === "primary" && "bg-primary text-on-primary",
+              tag.tone === "neutral" && "bg-surface-container-lowest/95 text-on-surface-variant",
+              tag.tone === "error" && "bg-error text-white",
+            )}
+          >
+            {tag.label}
+          </span>
+        )}
         <span className="absolute bottom-2.5 left-2.5 flex items-center gap-1.5 rounded-md bg-surface-container-lowest/95 px-2.5 py-1 text-xs font-bold shadow-sm">
           <CalendarDays className="size-3.5 text-secondary" aria-hidden />
           {date.weekday} {date.day} {date.month} · {date.time}

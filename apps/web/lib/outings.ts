@@ -21,14 +21,23 @@ export type OutingCardData = OutingSummary & { route: OutingRoute };
 
 export type Person = { id: string; display_name: string | null; avatar_url: string | null };
 
+export type OutingStatus = "abierta" | "cancelada";
+
 export type OutingDetail = OutingCardData & {
   level: OutingLevel;
   pace: OutingPace;
   notes: string | null;
-  status: "abierta" | "cancelada";
+  status: OutingStatus;
   organizer: Person;
   attendees: Person[];
 };
+
+/** Salida en "Mis salidas": la mía como organizador o en la que me inscribí. */
+export type MyOuting = OutingCardData & { status: OutingStatus; organizer_id: string };
+
+export function isOutingOpen(outing: { status: OutingStatus; starts_at: string }) {
+  return outing.status === "abierta" && new Date(outing.starts_at) > new Date();
+}
 
 // Las fechas se muestran y capturan en hora del centro de México aunque el render corra en otra zona (Vercel usa UTC)
 export const TZ = "America/Mexico_City";
@@ -36,6 +45,14 @@ export const TZ = "America/Mexico_City";
 /** Fecha y hora locales del formulario a ISO. México no tiene horario de verano desde 2022: el offset es fijo. */
 export function mexicoCityISO(date: string, time: string) {
   return `${date}T${time}:00-06:00`;
+}
+
+/** Inverso de mexicoCityISO: fecha y hora de CDMX para precargar el formulario al editar. */
+export function mexicoCityFields(iso: string) {
+  const d = new Date(iso);
+  const date = new Intl.DateTimeFormat("en-CA", { timeZone: TZ }).format(d);
+  const time = new Intl.DateTimeFormat("en-GB", { timeZone: TZ, hour: "2-digit", minute: "2-digit", hourCycle: "h23" }).format(d);
+  return { date, time };
 }
 
 /** Hoy en CDMX como YYYY-MM-DD, para el mínimo del selector de fecha. */

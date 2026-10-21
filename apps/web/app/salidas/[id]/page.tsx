@@ -3,11 +3,13 @@ import Image from "next/image";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import clsx from "clsx";
-import { ArrowLeft, CalendarDays, Clock, Gauge, MapPin, Mountain, Navigation, NotebookText, Ruler, TrendingUp, Users } from "lucide-react";
+import { ArrowLeft, Ban, CalendarDays, Clock, Gauge, MapPin, Mountain, Navigation, NotebookText, PencilLine, Ruler, TrendingUp, Users } from "lucide-react";
 import { Avatar } from "@/components/avatar";
+import { CancelOutingButton } from "@/components/cancel-outing-button";
 import { MembershipButton } from "@/components/membership-button";
 import { ShareButton } from "@/components/share-button";
 import { TopNav } from "@/components/top-nav";
+import { WhatsAppButton } from "@/components/whatsapp-button";
 import { createClient } from "@/lib/supabase/server";
 import { DIFFICULTY, formatDuration, formatKm, googleMapsSearch } from "@/lib/routes";
 import { LEVEL, outingDateParts, PACE, spotsLabel } from "@/lib/outings";
@@ -20,11 +22,8 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
   if (!outing) return {};
   const date = outingDateParts(outing.starts_at);
   const summary = `${date.long}, ${date.time} · ${outing.route.name} · ${spotsLabel(outing.capacity, outing.members)}`;
-  return {
-    title: outing.title,
-    description: summary,
-    openGraph: { title: outing.title, description: summary, images: outing.route.cover_url ? [outing.route.cover_url] : undefined },
-  };
+  // la imagen para WhatsApp/redes la genera opengraph-image.tsx de este segmento
+  return { title: outing.title, description: summary, openGraph: { title: outing.title, description: summary } };
 }
 
 export default async function OutingPage({ params }: Props) {
@@ -44,6 +43,7 @@ export default async function OutingPage({ params }: Props) {
   const isOrganizer = user?.id === outing.organizer.id;
   const full = outing.members >= outing.capacity;
   const target = { id: outing.id, slug: route.slug };
+  const invite = `${outing.title}: ${date.long}, ${date.time} en ${route.name}. ${spotsLabel(outing.capacity, outing.members)}. ¿Te unes?`;
 
   return (
     <div className="flex min-h-screen flex-col bg-surface-container-low">
@@ -53,6 +53,16 @@ export default async function OutingPage({ params }: Props) {
           <ArrowLeft className="size-4" aria-hidden />
           Volver a {route.name}
         </Link>
+
+        {outing.status === "cancelada" && (
+          <p role="status" className="mb-4 flex items-center gap-2 rounded-xl border border-error/30 bg-error/5 px-4 py-3 text-sm font-semibold text-error">
+            <Ban className="size-4 shrink-0" aria-hidden />
+            Quien organiza canceló esta salida.{" "}
+            <Link href={`/rutas/${route.slug}`} className="font-bold underline-offset-2 hover:underline">
+              Ver otras salidas a {route.name}
+            </Link>
+          </p>
+        )}
 
         <section className="mb-8 overflow-hidden rounded-2xl border border-outline-variant/60 bg-surface-container-lowest shadow-xs">
           <div className="relative h-[260px] sm:h-[340px]">
@@ -176,7 +186,7 @@ export default async function OutingPage({ params }: Props) {
             <div className="h-2 w-full overflow-hidden rounded-full bg-surface-container">
               <div className="h-full rounded-full bg-secondary-container" style={{ width: `${Math.min((outing.members / outing.capacity) * 100, 100)}%` }} />
             </div>
-            <p className={clsx("text-sm font-semibold", full ? "text-outline" : "text-secondary")}>{spotsLabel(outing.capacity, outing.members)}</p>
+            {!closed && <p className={clsx("text-sm font-semibold", full ? "text-outline" : "text-secondary")}>{spotsLabel(outing.capacity, outing.members)}</p>}
 
             <div>
               <p className="mb-2 flex items-center gap-1.5 text-xs font-semibold text-on-surface-variant">
@@ -198,9 +208,20 @@ export default async function OutingPage({ params }: Props) {
                   {outing.status === "cancelada" ? "Esta salida se canceló." : "Esta salida ya pasó."}
                 </p>
               ) : isOrganizer ? (
-                <p className="rounded-xl bg-primary-fixed/50 px-4 py-3 text-center text-sm font-semibold text-on-primary-fixed-variant">
-                  Tú organizas esta salida. Comparte el enlace para que se unan.
-                </p>
+                <div className="space-y-2.5">
+                  <p className="rounded-xl bg-primary-fixed/50 px-4 py-3 text-center text-sm font-semibold text-on-primary-fixed-variant">
+                    Tú organizas esta salida. Comparte el enlace para que se unan.
+                  </p>
+                  <WhatsAppButton message={invite} />
+                  <Link
+                    href={`/salidas/${outing.id}/editar`}
+                    className="flex w-full items-center justify-center gap-2 rounded-xl border border-outline-variant px-4 py-2.5 font-headline text-sm font-bold hover:bg-surface-container"
+                  >
+                    <PencilLine className="size-4" aria-hidden />
+                    Editar salida
+                  </Link>
+                  <CancelOutingButton outing={target} others={outing.members - 1} />
+                </div>
               ) : user ? (
                 <MembershipButton outing={target} joined={joined} full={full} />
               ) : (
@@ -212,6 +233,11 @@ export default async function OutingPage({ params }: Props) {
                 </Link>
               )}
               {joined && !isOrganizer && !closed && <p className="mt-2 text-center text-xs font-semibold text-primary">Ya estás en la lista. ¡Nos vemos en el sendero!</p>}
+              {!isOrganizer && !closed && (
+                <div className="mt-3">
+                  <WhatsAppButton message={invite} label="Invitar a alguien por WhatsApp" />
+                </div>
+              )}
             </div>
           </aside>
         </div>
