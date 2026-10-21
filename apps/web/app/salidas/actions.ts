@@ -23,10 +23,18 @@ function refreshListings(slug: string) {
   revalidatePath("/");
 }
 
-export async function createOuting(route: Target, _prev: ActionState, form: FormData): Promise<ActionState> {
-  const { supabase, user } = await requireUser(`/rutas/${route.slug}/convocar`);
-  const text = (name: string) => String(form.get(name) ?? "").trim();
+type OutingValues = {
+  title: string;
+  starts_at: string;
+  meeting_point_label: string;
+  capacity: number;
+  level: string;
+  pace: string;
+  notes: string | null;
+};
 
+function parseOutingForm(form: FormData): { error: string } | { values: OutingValues } {
+  const text = (name: string) => String(form.get(name) ?? "").trim();
   const title = text("title");
   const meetingPoint = text("meeting_point_label");
   const notes = text("notes");
@@ -43,11 +51,8 @@ export async function createOuting(route: Target, _prev: ActionState, form: Form
   if (!(level in LEVEL) || !(pace in PACE)) return { error: "Elige el nivel y el ritmo del grupo." };
   if (notes.length > 1000) return { error: "Las notas no pueden pasar de 1,000 caracteres." };
 
-  const { data, error } = await supabase
-    .from("outings")
-    .insert({
-      route_id: route.id,
-      organizer_id: user.id,
+  return {
+    values: {
       title,
       starts_at: startsAt.toISOString(),
       meeting_point_label: meetingPoint,
@@ -55,7 +60,18 @@ export async function createOuting(route: Target, _prev: ActionState, form: Form
       level,
       pace,
       notes: notes || null,
-    })
+    },
+  };
+}
+
+export async function createOuting(route: Target, _prev: ActionState, form: FormData): Promise<ActionState> {
+  const { supabase, user } = await requireUser(`/rutas/${route.slug}/convocar`);
+  const parsed = parseOutingForm(form);
+  if ("error" in parsed) return { error: parsed.error };
+
+  const { data, error } = await supabase
+    .from("outings")
+    .insert({ ...parsed.values, route_id: route.id, organizer_id: user.id })
     .select("id")
     .single();
   if (error) {
@@ -65,6 +81,46 @@ export async function createOuting(route: Target, _prev: ActionState, form: Form
 
   refreshListings(route.slug);
   redirect(`/salidas/${data.id}`);
+}
+
+export async function updateOuting(outing: Target, _prev: ActionState, form: FormData): Promise<ActionState> {
+  const { supabase, user } = await requireUser(`/salidas/${outing.id}/editar`);
+  const parsed = parseOutingForm(form);
+  if ("error" in parsed) return { error: parsed.error };
+
+  // organizer_id en el filtro: si no es mía, RLS no actualiza nada y data llega vacía
+  const { data, error } = await supabase.from("outings").update(parsed.values).eq("id", outing.id).eq("organizer_id", user.id).select("id");
+  if (error) {
+    // 23514: guard_outing_update (cupo menor a los inscritos, cancelada o ya pasó)
+    if (error.code === "23514") return { error: error.message };
+    console.error("updateOuting:", error.message);
+    return { error: "No pudimos guardar los cambios. Intenta de nuevo." };
+  }
+  if (!data.length) return { error: "Solo quien organiza puede editar esta salida." };
+
+  refreshListings(outing.slug);
+  revalidatePath(`/salidas/${outing.id}`);
+  redirect(`/salidas/${outing.id}`);
+}
+
+export async function cancelOuting(outing: Target): Promise<ActionState> {
+  const { supabase, user } = await requireUser(`/salidas/${outing.id}`);
+  const { data, error } = await supabase
+    .from("outings")
+    .update({ status: "cancelada" })
+    .eq("id", outing.id)
+    .eq("organizer_id", user.id)
+    .select("id");
+  if (error) {
+    if (error.code === "23514") return { error: error.message };
+    console.error("cancelOuting:", error.message);
+    return { error: "No pudimos cancelar la salida. Intenta de nuevo." };
+  }
+  if (!data.length) return { error: "Solo quien organiza puede cancelar esta salida." };
+
+  refreshListings(outing.slug);
+  revalidatePath(`/salidas/${outing.id}`);
+  return { error: null };
 }
 
 export async function joinOuting(outing: Target): Promise<ActionState> {

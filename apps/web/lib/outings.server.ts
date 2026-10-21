@@ -1,7 +1,7 @@
 import "server-only";
 import { cache } from "react";
-import { createAnonClient } from "@/lib/supabase/server";
-import type { OutingCardData, OutingDetail, OutingSummary, Person } from "@/lib/outings";
+import { createAnonClient, type createClient } from "@/lib/supabase/server";
+import type { MyOuting, OutingCardData, OutingDetail, OutingSummary, Person } from "@/lib/outings";
 
 const ROUTE_COLUMNS = "id, slug, name, place_label, difficulty, cover_url, distance_km, elevation_gain_m, duration_min";
 const SUMMARY_COLUMNS = "id, title, starts_at, meeting_point_label, capacity, outing_members(count)";
@@ -37,6 +37,18 @@ export async function listAllUpcomingOutings(): Promise<OutingCardData[]> {
     .limit(60);
   if (error) throw new Error(`outings: ${error.message}`);
   return (data as unknown as CardRow[]).map(withMembers);
+}
+
+/** Salidas donde estoy inscrito (quien organiza también lo está). `mine` filtra; outing_members(count) sigue contando a todos. */
+export async function listMyOutings(supabase: Awaited<ReturnType<typeof createClient>>, userId: string): Promise<MyOuting[]> {
+  const { data, error } = await supabase
+    .from("outings")
+    .select(`${SUMMARY_COLUMNS}, status, organizer_id, route:routes!inner(${ROUTE_COLUMNS}), mine:outing_members!inner(user_id)`)
+    .eq("mine.user_id", userId)
+    .order("starts_at")
+    .limit(200);
+  if (error) throw new Error(`mis salidas: ${error.message}`);
+  return (data as unknown as (CardRow & Pick<MyOuting, "status" | "organizer_id">)[]).map(withMembers);
 }
 
 export const getOuting = cache(async (id: string): Promise<OutingDetail | null> => {

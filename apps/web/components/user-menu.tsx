@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { useEffect, useState } from "react";
+import { CalendarCheck } from "lucide-react";
 import type { User } from "@supabase/supabase-js";
 import { createClient } from "@/lib/supabase/client";
 
@@ -33,6 +34,14 @@ export function UserMenu() {
   const avatar = user.user_metadata.avatar_url as string | undefined;
   return (
     <form action="/auth/salir" method="post" className="flex items-center gap-3">
+      <Link
+        href="/mis-salidas"
+        aria-label="Mis salidas"
+        className="flex items-center gap-1.5 rounded-full px-2 py-1.5 text-sm font-semibold text-primary hover:bg-surface-container sm:px-3"
+      >
+        <CalendarCheck className="size-5" aria-hidden />
+        <span className="hidden sm:inline">Mis salidas</span>
+      </Link>
       <span className="hidden text-sm font-medium text-on-surface-variant sm:inline">{name.split(" ")[0]}</span>
       {avatar ? (
         // eslint-disable-next-line @next/next/no-img-element -- avatar de Google, fuera de images.remotePatterns
