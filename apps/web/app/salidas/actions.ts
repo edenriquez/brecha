@@ -2,21 +2,12 @@
 
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
-import { createClient } from "@/lib/supabase/server";
+import { requireUser } from "@/lib/auth.server";
 import { LEVEL, mexicoCityISO, PACE } from "@/lib/outings";
 
 export type ActionState = { error: string | null };
 
 type Target = { id: string; slug: string };
-
-async function requireUser(next: string) {
-  const supabase = await createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-  if (!user) redirect(`/entrar?next=${encodeURIComponent(next)}`);
-  return { supabase, user };
-}
 
 function refreshListings(slug: string) {
   revalidatePath(`/rutas/${slug}`);

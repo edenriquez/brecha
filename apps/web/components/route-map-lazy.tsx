@@ -8,3 +8,5 @@ const placeholder = () => <div className="absolute inset-0 bg-[#e3e8e1]" />;
 export const RouteMap = dynamic(() => import("./route-map").then((m) => m.RouteMap), { ssr: false, loading: placeholder });
 
 export const StartPointMap = dynamic(() => import("./start-point-map").then((m) => m.StartPointMap), { ssr: false, loading: placeholder });
+
+export const TrackMap = dynamic(() => import("./track-map").then((m) => m.TrackMap), { ssr: false, loading: placeholder });

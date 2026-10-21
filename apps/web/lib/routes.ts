@@ -19,6 +19,13 @@ export type RouteSummary = {
 
 export type RouteDetail = RouteSummary & { description: string | null };
 
+export type RouteShape = {
+  line: [number, number][];
+  /** [km, altitud m, lng, lat] */
+  profile: [number, number, number, number][] | null;
+  gpxUrl: string | null;
+};
+
 export const ROUTE_TYPE: Record<RouteSummary["route_type"], string> = {
   ida_vuelta: "Ida y vuelta",
   circular: "Circular",
@@ -41,6 +48,19 @@ export function formatDuration(min: number) {
   const m = min % 60;
   if (!h) return `${m} min`;
   return m ? `${h} h ${m}` : `${h} h`;
+}
+
+/** "Cerro del Tepozteco (Vía Corta)" → "cerro-del-tepozteco-via-corta". Nunca "nueva": es la página para subir rutas. */
+export function slugify(text: string) {
+  const slug = text
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 60)
+    .replace(/-+$/, "");
+  return !slug || slug === "nueva" ? `ruta-${slug || "sin-nombre"}` : slug;
 }
 
 export function outingsLabel(n: number) {

@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef } from "react";
-import { addHillshade, MAP_STYLE, maplibregl } from "@/lib/maplibre";
+import { addHillshade, collapseAttribution, MAP_STYLE, maplibregl } from "@/lib/maplibre";
 
 export function StartPointMap({ lat, lng }: { lat: number; lng: number }) {
   const container = useRef<HTMLDivElement>(null);
@@ -17,7 +17,10 @@ export function StartPointMap({ lat, lng }: { lat: number; lng: number }) {
       attributionControl: { compact: true },
     });
     map.addControl(new maplibregl.NavigationControl({ showCompass: false }), "bottom-right");
-    map.once("load", () => addHillshade(map));
+    map.once("load", () => {
+      addHillshade(map);
+      collapseAttribution(map);
+    });
 
     const el = document.createElement("div");
     el.className = "flex items-center gap-2 rounded-full border border-outline-variant/80 bg-surface-container-lowest/95 px-2.5 py-1.5 shadow-md";
