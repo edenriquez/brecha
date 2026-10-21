@@ -3,14 +3,16 @@ import Image from "next/image";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import clsx from "clsx";
-import { ArrowLeftRight, CalendarPlus, Clock, Map as MapIcon, MapPin, Megaphone, Mountain, Navigation, Ruler, TrendingUp, Users } from "lucide-react";
+import { ArrowLeftRight, CalendarPlus, Clock, Download, Map as MapIcon, MapPin, Megaphone, Mountain, Navigation, Ruler, TrendingUp, Users } from "lucide-react";
 import { StartPointMap } from "@/components/route-map-lazy";
+import { RouteTrack } from "@/components/route-track";
 import { ShareButton } from "@/components/share-button";
 import { TopNav } from "@/components/top-nav";
 import { DIFFICULTY, formatDuration, formatKm, googleMapsDirections, ROUTE_TYPE } from "@/lib/routes";
 import { outingDateParts, spotsLabel, type OutingSummary } from "@/lib/outings";
 import { listUpcomingOutings } from "@/lib/outings.server";
-import { getRoute } from "@/lib/routes.server";
+import { getRoute, getRouteShape } from "@/lib/routes.server";
+import { createAnonClient } from "@/lib/supabase/server";
 
 export const revalidate = 300;
 
@@ -35,7 +37,7 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
 export default async function RoutePage({ params }: Props) {
   const route = await getRoute((await params).slug);
   if (!route) notFound();
-  const outings = await listUpcomingOutings(route.id);
+  const [outings, shape] = await Promise.all([listUpcomingOutings(route.id), getRouteShape(createAnonClient(), route.slug)]);
   const difficulty = DIFFICULTY[route.difficulty];
 
   return (
@@ -100,23 +102,40 @@ export default async function RoutePage({ params }: Props) {
                 <div>
                   <h2 className="flex items-center gap-2 font-headline text-lg font-bold">
                     <MapIcon className="size-5 text-primary" aria-hidden />
-                    Punto de inicio
+                    {shape ? "Recorrido" : "Punto de inicio"}
                   </h2>
-                  <p className="text-xs text-on-surface-variant">El trazo completo llega cuando se suba el GPX de la ruta</p>
+                  <p className="text-xs text-on-surface-variant">
+                    {shape ? "Recorre el perfil para ubicar cada punto en el mapa" : "Esta ruta todavía no tiene trazo GPX"}
+                  </p>
                 </div>
-                <a
-                  href={googleMapsDirections(route.lat, route.lng)}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="inline-flex items-center gap-1.5 self-start rounded-lg bg-primary-container px-3 py-1.5 text-xs font-semibold text-on-primary transition-colors hover:bg-primary"
-                >
-                  <Navigation className="size-4" aria-hidden />
-                  Cómo llegar
-                </a>
+                <div className="flex flex-wrap gap-2 self-start">
+                  {shape?.gpxUrl && (
+                    <a
+                      href={shape.gpxUrl}
+                      className="inline-flex items-center gap-1.5 rounded-lg border border-outline-variant px-3 py-1.5 text-xs font-semibold transition-colors hover:border-primary-container hover:text-primary"
+                    >
+                      <Download className="size-4" aria-hidden />
+                      Descargar GPX
+                    </a>
+                  )}
+                  <a
+                    href={googleMapsDirections(route.lat, route.lng)}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-flex items-center gap-1.5 rounded-lg bg-primary-container px-3 py-1.5 text-xs font-semibold text-on-primary transition-colors hover:bg-primary"
+                  >
+                    <Navigation className="size-4" aria-hidden />
+                    Cómo llegar
+                  </a>
+                </div>
               </div>
-              <div className="relative h-80 overflow-hidden rounded-xl border border-outline-variant/60 bg-[#e3e8e1] sm:h-96">
-                <StartPointMap lat={route.lat} lng={route.lng} />
-              </div>
+              {shape ? (
+                <RouteTrack line={shape.line} profile={shape.profile} />
+              ) : (
+                <div className="relative h-80 overflow-hidden rounded-xl border border-outline-variant/60 bg-[#e3e8e1] sm:h-96">
+                  <StartPointMap lat={route.lat} lng={route.lng} />
+                </div>
+              )}
             </div>
 
             {(route.description || route.tags.length > 0) && (

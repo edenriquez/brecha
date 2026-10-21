@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { Mountain } from "lucide-react";
+import { FilePlus2, Mountain } from "lucide-react";
 import { SearchBox } from "@/components/search-box";
 import { UserMenu } from "@/components/user-menu";
 
@@ -18,6 +18,10 @@ export function TopNav({ search }: { search?: React.ReactNode }) {
         <nav className="hidden shrink-0 items-center gap-7 md:flex">
           <Link href="/" className="flex items-center gap-1.5 border-b-2 border-primary pb-1 font-semibold text-primary">
             Mapa
+          </Link>
+          <Link href="/rutas/nueva" className="flex items-center gap-1.5 border-b-2 border-transparent pb-1 font-semibold text-on-surface-variant transition-colors hover:text-primary">
+            <FilePlus2 className="size-4" aria-hidden />
+            Subir ruta
           </Link>
         </nav>
         <div className="shrink-0">

@@ -1,6 +1,7 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import type { LineString } from "geojson";
 import Image from "next/image";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
@@ -11,6 +12,7 @@ import {
   CarFront,
   ChevronRight,
   CircleCheck,
+  FilePlus2,
   Footprints,
   List,
   Map as MapIcon,
@@ -36,7 +38,9 @@ import {
   TYPE_KEY,
 } from "@/lib/route-filters";
 import { DIFFICULTY, formatDuration, formatKm, ROUTE_TYPE, type Difficulty, type RouteSummary } from "@/lib/routes";
+import type { LineCoords } from "@/lib/maplibre";
 import type { OutingCardData } from "@/lib/outings";
+import { createClient } from "@/lib/supabase/client";
 import { useUrlParams } from "@/lib/use-url-params";
 
 const DIFFICULTIES: Difficulty[] = ["facil", "moderada", "dificil"];
@@ -71,6 +75,21 @@ export function Explorer({ routes, outings }: { routes: RouteSummary[]; outings:
   }, [tab, visible, filtered, visibleOutings]);
   const selected = mapRoutes.find((r) => r.id === selectedId) ?? null;
   const router = useRouter();
+
+  // el trazo de la ruta elegida se pide al seleccionarla: el listado no carga los de todas
+  const [tracks, setTracks] = useState<Record<string, LineCoords | null>>({});
+  useEffect(() => {
+    if (!selectedId || selectedId in tracks) return;
+    createClient()
+      .from("route_shapes")
+      .select("track")
+      .eq("id", selectedId)
+      .maybeSingle()
+      .then(({ data }) => {
+        const line = (data?.track as LineString | undefined)?.coordinates as LineCoords | undefined;
+        setTracks((t) => ({ ...t, [selectedId]: line ?? null }));
+      });
+  }, [selectedId, tracks]);
 
   // primer clic en un pin lo selecciona; el segundo abre la ruta
   function selectOrOpen(id: string) {
@@ -176,18 +195,33 @@ export function Explorer({ routes, outings }: { routes: RouteSummary[]; outings:
           </div>
 
           {tab === "rutas" ? (
-            visible.length ? (
-              <div className="grid grid-cols-1 gap-4 pb-24 sm:grid-cols-2 lg:pb-10 xl:grid-cols-3">
-                {visible.map((route, i) => (
-                  <RouteCard key={route.id} route={route} priority={i < 3} selected={route.id === selectedId} onSelect={() => setSelectedId(route.id)} />
-                ))}
-              </div>
-            ) : (
-              <Empty>
-                {filtering ? "Ninguna ruta coincide con tu búsqueda." : "Todavía no hay rutas publicadas."}{" "}
-                {filtering && <ClearLink onClick={() => setParams(CLEARED)} />}
-              </Empty>
-            )
+            <div className="space-y-6 pb-24 lg:pb-10">
+              {visible.length ? (
+                <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">
+                  {visible.map((route, i) => (
+                    <RouteCard key={route.id} route={route} priority={i < 3} selected={route.id === selectedId} onSelect={() => setSelectedId(route.id)} />
+                  ))}
+                </div>
+              ) : (
+                <Empty>
+                  {filtering ? "Ninguna ruta coincide con tu búsqueda." : "Todavía no hay rutas publicadas."}{" "}
+                  {filtering && <ClearLink onClick={() => setParams(CLEARED)} />}
+                </Empty>
+              )}
+              <Link
+                href="/rutas/nueva"
+                className="flex items-center gap-3 rounded-xl border border-dashed border-outline-variant bg-surface-container-lowest/60 p-4 transition-colors hover:border-primary-container"
+              >
+                <span className="flex size-10 shrink-0 items-center justify-center rounded-full bg-primary-fixed/60 text-primary">
+                  <FilePlus2 className="size-5" aria-hidden />
+                </span>
+                <span className="min-w-0 flex-1">
+                  <span className="block font-headline text-sm font-bold">¿Conoces un sendero que no está aquí?</span>
+                  <span className="block text-xs text-on-surface-variant">Sube su GPX y calculamos distancia, desnivel y perfil.</span>
+                </span>
+                <ChevronRight className="size-4 shrink-0 text-outline" aria-hidden />
+              </Link>
+            </div>
           ) : visibleOutings.length ? (
             <div className="grid grid-cols-1 gap-4 pb-24 sm:grid-cols-2 lg:pb-10">
               {visibleOutings.map((outing) => (
@@ -219,7 +253,7 @@ export function Explorer({ routes, outings }: { routes: RouteSummary[]; outings:
             view === "lista" && "hidden",
           )}
         >
-          <RouteMap routes={mapRoutes} selectedId={selectedId} onSelect={selectOrOpen} />
+          <RouteMap routes={mapRoutes} selectedId={selectedId} onSelect={selectOrOpen} track={selected ? (tracks[selected.id] ?? null) : null} />
           {selected && <MapPeek route={selected} />}
         </section>
 

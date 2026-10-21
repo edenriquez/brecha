@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef } from "react";
-import { addHillshade, MAP_STYLE, maplibregl } from "@/lib/maplibre";
+import { addHillshade, collapseAttribution, lineBounds, MAP_STYLE, maplibregl, setTrack, type LineCoords } from "@/lib/maplibre";
 import { DIFFICULTY, formatKm, type RouteSummary } from "@/lib/routes";
 
 const PILL = "flex items-center gap-1.5 rounded-full border py-1 px-2.5 font-headline text-xs font-bold shadow-sm transition-transform";
@@ -42,10 +42,13 @@ export function RouteMap({
   routes,
   selectedId,
   onSelect,
+  track,
 }: {
   routes: RouteSummary[];
   selectedId: string | null;
   onSelect: (id: string) => void;
+  /** Trazo de la ruta seleccionada, si tiene */
+  track: LineCoords | null;
 }) {
   const container = useRef<HTMLDivElement>(null);
   const mapRef = useRef<maplibregl.Map | null>(null);
@@ -54,6 +57,8 @@ export function RouteMap({
   const onSelectRef = useRef(onSelect);
   const framedKey = useRef<string | null>(null);
   const pendingFrame = useRef<maplibregl.LngLatBounds | null>(null);
+  const styleLoaded = useRef(false);
+  const trackRef = useRef(track);
   useEffect(() => {
     onSelectRef.current = onSelect;
   }, [onSelect]);
@@ -68,7 +73,12 @@ export function RouteMap({
       attributionControl: { compact: true },
     });
     map.addControl(new maplibregl.NavigationControl({ showCompass: false }), "bottom-right");
-    map.once("load", () => addHillshade(map));
+    map.once("load", () => {
+      addHillshade(map);
+      setTrack(map, trackRef.current ?? []);
+      collapseAttribution(map);
+      styleLoaded.current = true;
+    });
     map.on("error", (e: { error?: { message?: string } }) => console.error("maplibre:", e.error?.message ?? e));
     // en móvil el mapa vive oculto (0×0) mientras se ve la lista: se encuadra al mostrarse
     map.on("resize", () => {
@@ -82,8 +92,18 @@ export function RouteMap({
       registry.clear();
       map.remove();
       mapRef.current = null;
+      styleLoaded.current = false;
     };
   }, []);
+
+  useEffect(() => {
+    trackRef.current = track;
+    const map = mapRef.current;
+    if (!map || !styleLoaded.current) return;
+    setTrack(map, track ?? []);
+    // al elegir una ruta con trazo se acerca a él; el mapa oculto (móvil, vista de lista) no se mueve
+    if (track && map.getContainer().clientWidth) map.fitBounds(lineBounds(track), { padding: 80, maxZoom: 13.5, duration: 800 });
+  }, [track]);
 
   useEffect(() => {
     const map = mapRef.current;
