@@ -21,7 +21,7 @@ export default async function ConvocarPage({ params }: Props) {
 
   const route = await getRoute(slug);
   if (!route) notFound();
-  const { data: profile } = await supabase.from("profiles").select("display_name, avatar_url").eq("id", user.id).single();
+  const { data: profile } = await supabase.from("profiles").select("display_name, avatar_url, rules_accepted_at").eq("id", user.id).single();
 
   return (
     <div className="flex min-h-screen flex-col bg-surface-container-low">
@@ -39,7 +39,7 @@ export default async function ConvocarPage({ params }: Props) {
           <h1 className="font-headline text-3xl font-extrabold tracking-tight sm:text-4xl">Convoca una salida</h1>
           <p className="mt-1.5 text-on-surface-variant">Invita a la comunidad a caminar contigo. Toma 2 minutos.</p>
         </div>
-        <OutingForm route={route} organizer={profile ?? { display_name: null, avatar_url: null }} />
+        <OutingForm route={route} organizer={profile ?? { display_name: null, avatar_url: null }} askRules={!profile?.rules_accepted_at} />
       </main>
     </div>
   );

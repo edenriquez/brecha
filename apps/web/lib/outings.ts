@@ -28,6 +28,7 @@ export type OutingDetail = OutingCardData & {
   pace: OutingPace;
   notes: string | null;
   status: OutingStatus;
+  updated_at: string;
   organizer: Person;
   attendees: Person[];
 };

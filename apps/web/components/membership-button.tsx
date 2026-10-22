@@ -2,16 +2,19 @@
 
 import { useActionState } from "react";
 import { LogOut, UserPlus } from "lucide-react";
+import { RulesConsent } from "@/components/rules-consent";
 import { joinOuting, leaveOuting, type ActionState } from "@/app/salidas/actions";
 
 type Target = { id: string; slug: string };
 
-export function MembershipButton({ outing, joined, full }: { outing: Target; joined: boolean; full: boolean }) {
+/** `askRules`: aún no acepta las reglas de la comunidad; se piden antes de unirse. */
+export function MembershipButton({ outing, joined, full, askRules }: { outing: Target; joined: boolean; full: boolean; askRules: boolean }) {
   const action = joined ? leaveOuting.bind(null, outing) : joinOuting.bind(null, outing);
-  const [state, formAction, pending] = useActionState<ActionState>(action, { error: null });
+  const [state, formAction, pending] = useActionState<ActionState, FormData>(action, { error: null });
 
   return (
     <form action={formAction} className="space-y-2">
+      {!joined && !full && askRules && <RulesConsent />}
       {joined ? (
         <button
           disabled={pending}
