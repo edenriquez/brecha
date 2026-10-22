@@ -4,10 +4,11 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import type { LineString } from "geojson";
 import { RECENT_REPORT_DAYS, shiftDay, type RoutePhoto, type TrailReport } from "@/lib/community";
 import { todayInMexicoCity } from "@/lib/outings";
+import { PERSON_COLUMNS } from "@/lib/profiles";
 import { createAnonClient } from "@/lib/supabase/server";
 import { ROUTE_FIELDS_COLUMNS, toRouteFields, type RouteDetail, type RouteFields, type RouteShape, type RouteStatus, type RouteSummary } from "@/lib/routes";
 
-const SUMMARY_COLUMNS = "id, slug, name, place_label, difficulty, route_type, distance_km, elevation_gain_m, duration_min, cover_url, tags, lat, lng, upcoming_outings";
+export const SUMMARY_COLUMNS = "id, slug, name, place_label, difficulty, route_type, distance_km, elevation_gain_m, duration_min, cover_url, tags, lat, lng, upcoming_outings";
 
 export async function listRoutes(): Promise<RouteSummary[]> {
   // el build de CI corre sin Supabase: la página se prerenderiza vacía y en Vercel se llena con datos reales
@@ -51,21 +52,19 @@ export async function getOwnRoute(supabase: SupabaseClient, slug: string): Promi
   return { id: row.id, slug: row.slug, distance_km: row.distance_km, elevation_gain_m: row.elevation_gain_m, status: row.status, created_by: row.created_by, review_note: row.review_note, fields: toRouteFields(row) };
 }
 
-const AUTHOR = "id, display_name, avatar_url";
-
 /** Fotos de la comunidad y reportes recientes del sendero, del más nuevo al más viejo. */
 export async function getRouteCommunity(routeId: string): Promise<{ photos: RoutePhoto[]; reports: TrailReport[] }> {
   const supabase = createAnonClient();
   const [photos, reports] = await Promise.all([
     supabase
       .from("route_photos")
-      .select(`id, path, caption, width, height, created_at, author:profiles!route_photos_user_id_fkey(${AUTHOR})`)
+      .select(`id, path, caption, width, height, created_at, author:profiles!route_photos_user_id_fkey(${PERSON_COLUMNS})`)
       .eq("route_id", routeId)
       .order("created_at", { ascending: false })
       .limit(60),
     supabase
       .from("trail_reports")
-      .select(`id, visited_on, status, issues, note, author:profiles!trail_reports_user_id_fkey(${AUTHOR})`)
+      .select(`id, visited_on, status, issues, note, author:profiles!trail_reports_user_id_fkey(${PERSON_COLUMNS})`)
       .eq("route_id", routeId)
       .gte("visited_on", shiftDay(todayInMexicoCity(), -RECENT_REPORT_DAYS))
       .order("visited_on", { ascending: false })

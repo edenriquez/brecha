@@ -2,7 +2,10 @@
 
 import Link from "next/link";
 import { useEffect, useId, useRef, useState } from "react";
-import { CalendarCheck, ChevronDown, ClipboardCheck, FilePlus2, HeartHandshake, LogOut, Route } from "lucide-react";
+import { CalendarCheck, ChevronDown, ClipboardCheck, FilePlus2, Heart, HeartHandshake, LogOut, Route, UserRound } from "lucide-react";
+import { Avatar } from "@/components/avatar";
+import type { Person } from "@/lib/outings";
+import { PERSON_COLUMNS, profileHref } from "@/lib/profiles";
 import { createClient } from "@/lib/supabase/client";
 import { useSessionUser } from "@/lib/use-session-user";
 
@@ -13,12 +16,19 @@ export function UserMenu() {
   const [open, setOpen] = useState(false);
   // rutas en revisión si es moderación; null si no lo es
   const [pending, setPending] = useState<number | null>(null);
+  const [profile, setProfile] = useState<Person | null>(null);
   const menu = useRef<HTMLDivElement>(null);
   const menuId = useId();
 
   useEffect(() => {
     if (!user) return;
     const supabase = createClient();
+    supabase
+      .from("profiles")
+      .select(PERSON_COLUMNS)
+      .eq("id", user.id)
+      .maybeSingle()
+      .then(({ data }) => setProfile(data as Person | null));
     supabase.rpc("is_admin").then(async ({ data }) => {
       if (data !== true) return;
       const { count } = await supabase.from("routes").select("id", { count: "exact", head: true }).eq("status", "revision");
@@ -52,8 +62,14 @@ export function UserMenu() {
     );
   }
 
-  const name = (user.user_metadata.full_name as string | undefined) ?? user.email ?? "";
-  const avatar = user.user_metadata.avatar_url as string | undefined;
+  // hasta que llega el perfil, lo que trae la sesión de Google
+  const person: Person = profile ?? {
+    id: user.id,
+    display_name: (user.user_metadata.full_name as string | undefined) ?? user.email ?? null,
+    avatar_url: (user.user_metadata.avatar_url as string | undefined) ?? null,
+    avatar_path: null,
+  };
+  const name = person.display_name ?? "";
   return (
     <div className="flex items-center gap-2 sm:gap-3">
       <Link
@@ -73,14 +89,7 @@ export function UserMenu() {
           aria-label="Tu cuenta"
           className="relative flex items-center gap-2 rounded-full py-0.5 pr-1 pl-0.5 hover:bg-surface-container sm:pr-2"
         >
-          {avatar ? (
-            // eslint-disable-next-line @next/next/no-img-element -- avatar de Google, fuera de images.remotePatterns
-            <img src={avatar} alt="" referrerPolicy="no-referrer" className="size-9 rounded-full ring-2 ring-primary-fixed" />
-          ) : (
-            <span className="flex size-9 items-center justify-center rounded-full bg-primary-container font-headline text-sm font-bold text-on-primary">
-              {name.charAt(0).toUpperCase()}
-            </span>
-          )}
+          <Avatar person={person} size={36} className="border-0 ring-2 ring-primary-fixed" />
           <span className="hidden text-sm font-medium text-on-surface-variant sm:inline">{name.split(" ")[0]}</span>
           <ChevronDown className="hidden size-4 text-outline sm:block" aria-hidden />
           {!!pending && <span className="absolute -top-0.5 left-7 size-2.5 rounded-full border-2 border-surface bg-secondary" aria-hidden />}
@@ -89,6 +98,14 @@ export function UserMenu() {
           <div id={menuId} className="absolute right-0 z-50 mt-2 w-60 rounded-xl border border-outline-variant/70 bg-surface-container-lowest p-1.5 shadow-lg">
             <p className="truncate px-3 pt-1.5 pb-2 text-xs text-on-surface-variant">{user.email}</p>
             <nav aria-label="Tu cuenta" onClick={() => setOpen(false)}>
+              <Link href={profileHref(user.id)} className={ITEM}>
+                <UserRound className="size-4 text-primary" aria-hidden />
+                Mi perfil
+              </Link>
+              <Link href="/guardadas" className={ITEM}>
+                <Heart className="size-4 text-primary" aria-hidden />
+                Guardadas
+              </Link>
               <Link href="/mis-salidas" className={ITEM}>
                 <CalendarCheck className="size-4 text-primary" aria-hidden />
                 Mis salidas

@@ -19,7 +19,7 @@ export type OutingRoute = Pick<RouteSummary, "id" | "slug" | "name" | "place_lab
 
 export type OutingCardData = OutingSummary & { route: OutingRoute };
 
-export type Person = { id: string; display_name: string | null; avatar_url: string | null };
+export type Person = { id: string; display_name: string | null; avatar_url: string | null; avatar_path: string | null };
 
 export type OutingStatus = "abierta" | "cancelada";
 
