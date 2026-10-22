@@ -6,13 +6,15 @@ import clsx from "clsx";
 import { ArrowLeftRight, CalendarPlus, Clock, Download, Map as MapIcon, MapPin, Megaphone, Mountain, Navigation, Ruler, TrendingUp, Users } from "lucide-react";
 import { StartPointMap } from "@/components/route-map-lazy";
 import { RouteFeedback } from "@/components/route-feedback";
+import { RoutePhotos } from "@/components/route-photos";
 import { RouteTrack } from "@/components/route-track";
 import { ShareButton } from "@/components/share-button";
 import { TopNav } from "@/components/top-nav";
+import { TrailConditions } from "@/components/trail-conditions";
 import { DIFFICULTY, formatDuration, formatKm, googleMapsDirections, ROUTE_TYPE } from "@/lib/routes";
 import { outingDateParts, spotsLabel, type OutingSummary } from "@/lib/outings";
 import { listUpcomingOutings } from "@/lib/outings.server";
-import { getRoute, getRouteShape } from "@/lib/routes.server";
+import { getRoute, getRouteCommunity, getRouteShape } from "@/lib/routes.server";
 import { createAnonClient } from "@/lib/supabase/server";
 
 export const revalidate = 300;
@@ -38,8 +40,11 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
 export default async function RoutePage({ params }: Props) {
   const route = await getRoute((await params).slug);
   if (!route) notFound();
-  const [outings, shape] = await Promise.all([listUpcomingOutings(route.id), getRouteShape(createAnonClient(), route.slug)]);
+  const [outings, shape, community] = await Promise.all([listUpcomingOutings(route.id), getRouteShape(createAnonClient(), route.slug), getRouteCommunity(route.id)]);
   const difficulty = DIFFICULTY[route.difficulty];
+  const target = { id: route.id, slug: route.slug };
+  // sin portada, la foto más reciente de la comunidad
+  const cover = route.cover_url ?? community.photos[0]?.url ?? null;
 
   return (
     <div className="flex min-h-screen flex-col bg-surface-container-low">
@@ -67,8 +72,8 @@ export default async function RoutePage({ params }: Props) {
         </section>
 
         <section className="relative mb-8 h-[280px] overflow-hidden rounded-2xl border border-outline-variant/60 bg-surface-container shadow-xs sm:h-[380px] md:h-[460px]">
-          {route.cover_url ? (
-            <Image src={route.cover_url} alt={route.name} fill priority sizes="(min-width: 1280px) 1216px, 100vw" className="object-cover" />
+          {cover ? (
+            <Image src={cover} alt={route.name} fill priority sizes="(min-width: 1280px) 1216px, 100vw" className="object-cover" />
           ) : (
             <div className="flex h-full flex-col items-center justify-center gap-2 bg-gradient-to-br from-primary-fixed/50 to-surface-container text-primary-container/70">
               <Mountain className="size-14" aria-hidden />
@@ -97,6 +102,8 @@ export default async function RoutePage({ params }: Props) {
                 <Stat icon={<ArrowLeftRight className="size-5" />} label="Tipo" value={ROUTE_TYPE[route.route_type]} />
               </dl>
             </div>
+
+            <TrailConditions route={target} reports={community.reports} />
 
             <div className="rounded-2xl border border-outline-variant/70 bg-surface-container-lowest p-6 shadow-xs">
               <div className="mb-4 flex flex-col justify-between gap-3 sm:flex-row sm:items-center">
@@ -158,6 +165,8 @@ export default async function RoutePage({ params }: Props) {
                 )}
               </div>
             )}
+
+            <RoutePhotos route={target} photos={community.photos} />
 
             <RouteFeedback route={{ id: route.id, slug: route.slug, created_by: route.created_by }} />
           </div>

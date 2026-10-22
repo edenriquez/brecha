@@ -2,6 +2,7 @@
 
 import { useEffect, useRef } from "react";
 import { addHillshade, collapseAttribution, lineBounds, MAP_STYLE, maplibregl, setTrack, type LineCoords } from "@/lib/maplibre";
+import type { Area } from "@/lib/route-filters";
 import { DIFFICULTY, formatKm, type RouteSummary } from "@/lib/routes";
 
 const PILL = "flex items-center gap-1.5 rounded-full border py-1 px-2.5 font-headline text-xs font-bold shadow-sm transition-transform";
@@ -24,18 +25,20 @@ function paintPill(el: HTMLElement, route: RouteSummary, selected: boolean) {
   el.innerHTML = pillHtml(route, selected);
 }
 
-function frame(
-  map: maplibregl.Map,
-  bounds: maplibregl.LngLatBounds,
-  pending: { current: maplibregl.LngLatBounds | null },
-  animate: boolean,
-) {
+type Framing = { bounds: maplibregl.LngLatBoundsLike; options: maplibregl.FitBoundsOptions };
+
+function frame(map: maplibregl.Map, framing: Framing, pending: { current: Framing | null }) {
   if (!map.getContainer().clientWidth) {
-    pending.current = bounds;
+    pending.current = framing;
     return;
   }
   pending.current = null;
-  map.fitBounds(bounds, { padding: 80, maxZoom: 11, duration: animate ? 600 : 0 });
+  map.fitBounds(framing.bounds, framing.options);
+}
+
+function viewArea(map: maplibregl.Map): Area {
+  const b = map.getBounds();
+  return [b.getWest(), b.getSouth(), b.getEast(), b.getNorth()];
 }
 
 export function RouteMap({
@@ -43,12 +46,18 @@ export function RouteMap({
   selectedId,
   onSelect,
   track,
+  area,
+  onUserMove,
 }: {
   routes: RouteSummary[];
   selectedId: string | null;
   onSelect: (id: string) => void;
   /** Trazo de la ruta seleccionada, si tiene */
   track: LineCoords | null;
+  /** Zona de "Buscar en esta zona": mientras exista, los pines no vuelven a encuadrarse */
+  area: Area | null;
+  /** Lo que se ve tras mover el mapa con la mano (no tras un encuadre automático) */
+  onUserMove: (view: Area) => void;
 }) {
   const container = useRef<HTMLDivElement>(null);
   const mapRef = useRef<maplibregl.Map | null>(null);
@@ -56,12 +65,16 @@ export function RouteMap({
   const selectedRef = useRef(selectedId);
   const onSelectRef = useRef(onSelect);
   const framedKey = useRef<string | null>(null);
-  const pendingFrame = useRef<maplibregl.LngLatBounds | null>(null);
+  const pendingFrame = useRef<Framing | null>(null);
   const styleLoaded = useRef(false);
   const trackRef = useRef(track);
+  const areaRef = useRef(area);
+  const areaFramed = useRef(false);
+  const onUserMoveRef = useRef(onUserMove);
   useEffect(() => {
     onSelectRef.current = onSelect;
-  }, [onSelect]);
+    onUserMoveRef.current = onUserMove;
+  }, [onSelect, onUserMove]);
 
   useEffect(() => {
     if (!container.current) return;
@@ -82,7 +95,11 @@ export function RouteMap({
     map.on("error", (e: { error?: { message?: string } }) => console.error("maplibre:", e.error?.message ?? e));
     // en móvil el mapa vive oculto (0×0) mientras se ve la lista: se encuadra al mostrarse
     map.on("resize", () => {
-      if (pendingFrame.current) frame(map, pendingFrame.current, pendingFrame, false);
+      if (pendingFrame.current) frame(map, { ...pendingFrame.current, options: { ...pendingFrame.current.options, duration: 0 } }, pendingFrame);
+    });
+    // fitBounds/easeTo no traen originalEvent: solo arrastrar, hacer zoom o usar los botones cuenta
+    map.on("moveend", (e: { originalEvent?: Event }) => {
+      if (e.originalEvent) onUserMoveRef.current(viewArea(map));
     });
     mapRef.current = map;
     framedKey.current = null;
@@ -131,11 +148,25 @@ export function RouteMap({
 
     const key = [...ids].sort().join();
     if (!routes.length || key === framedKey.current) return;
+    const animate = framedKey.current !== null;
+    framedKey.current = key;
+    if (areaRef.current) return;
     const bounds = new maplibregl.LngLatBounds();
     routes.forEach((r) => bounds.extend([r.lng, r.lat]));
-    frame(map, bounds, pendingFrame, framedKey.current !== null);
-    framedKey.current = key;
+    frame(map, { bounds, options: { padding: 80, maxZoom: 11, duration: animate ? 600 : 0 } }, pendingFrame);
   }, [routes]);
+
+  // una zona que llega en la URL (enlace compartido, recarga) se encuadra una vez; la que se elige con el botón ya es la vista
+  useEffect(() => {
+    areaRef.current = area;
+    const map = mapRef.current;
+    if (!map || !area || areaFramed.current) return;
+    areaFramed.current = true;
+    const view = viewArea(map);
+    if (area.every((n, i) => Math.abs(n - view[i]) < 1e-3)) return;
+    const [west, south, east, north] = area;
+    frame(map, { bounds: [[west, south], [east, north]], options: { padding: 0, duration: 0 } }, pendingFrame);
+  }, [area]);
 
   useEffect(() => {
     selectedRef.current = selectedId;

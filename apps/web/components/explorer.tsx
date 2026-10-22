@@ -16,10 +16,13 @@ import {
   Footprints,
   List,
   Map as MapIcon,
+  MapPinned,
   Mountain,
   Navigation,
   Route,
+  Search,
   SlidersHorizontal,
+  X,
 } from "lucide-react";
 import { OutingCard } from "@/components/outing-card";
 import { RouteCard } from "@/components/route-card";
@@ -27,15 +30,20 @@ import { RouteMap } from "@/components/route-map-lazy";
 import { SearchBox } from "@/components/search-box";
 import { TopNav } from "@/components/top-nav";
 import {
+  AREA_KEY,
   countPanelFilters,
   DIFFICULTY_KEY,
+  formatArea,
+  inArea,
   matchesFilters,
   matchesQuery,
+  parseArea,
   QUERY_KEY,
   RANGE_KEYS,
   RANGES,
   routeHaystack,
   TYPE_KEY,
+  type Area,
 } from "@/lib/route-filters";
 import { DIFFICULTY, formatDuration, formatKm, ROUTE_TYPE, type Difficulty, type RouteSummary } from "@/lib/routes";
 import type { LineCoords } from "@/lib/maplibre";
@@ -44,7 +52,7 @@ import { createClient } from "@/lib/supabase/client";
 import { useUrlParams } from "@/lib/use-url-params";
 
 const DIFFICULTIES: Difficulty[] = ["facil", "moderada", "dificil"];
-const CLEARED = Object.fromEntries([QUERY_KEY, DIFFICULTY_KEY, TYPE_KEY, ...RANGE_KEYS].map((k) => [k, null]));
+const CLEARED = Object.fromEntries([QUERY_KEY, DIFFICULTY_KEY, TYPE_KEY, AREA_KEY, ...RANGE_KEYS].map((k) => [k, null]));
 
 export function Explorer({ routes, outings }: { routes: RouteSummary[]; outings: OutingCardData[] }) {
   const [params, setParams] = useUrlParams();
@@ -52,27 +60,39 @@ export function Explorer({ routes, outings }: { routes: RouteSummary[]; outings:
   const difficulty = params.get(DIFFICULTY_KEY);
   const tab = params.get("ver") === "salidas" ? "salidas" : "rutas";
   const panelCount = countPanelFilters(params);
-  const filtering = Boolean(query.trim() || difficulty || panelCount);
+  const areaParam = params.get(AREA_KEY);
+  const area = useMemo(() => parseArea(areaParam), [areaParam]);
+  const filtering = Boolean(query.trim() || difficulty || panelCount || area);
+  // lo que se ve tras mover el mapa a mano; con él aparece "Buscar en esta zona"
+  const [moved, setMoved] = useState<Area | null>(null);
+  const canSearchArea = moved !== null && (!area || formatArea(moved) !== formatArea(area));
 
   const [panelOpen, setPanelOpen] = useState(false);
   const [view, setView] = useState<"lista" | "mapa">("lista");
   // en ambas pestañas la selección es una ruta: es lo que tiene pin en el mapa
   const [selectedId, setSelectedId] = useState<string | null>(null);
 
+  // la zona solo recorta el listado: el mapa sigue mostrando los pines de fuera para poder ir hacia ellos
   const filtered = useMemo(() => routes.filter((r) => matchesFilters(r, params)), [routes, params]);
-  const visible = useMemo(() => filtered.filter((r) => matchesQuery(routeHaystack(r), query)), [filtered, query]);
-  const visibleOutings = useMemo(() => {
+  const matching = useMemo(() => filtered.filter((r) => matchesQuery(routeHaystack(r), query)), [filtered, query]);
+  const visible = useMemo(() => (area ? matching.filter((r) => inArea(r, area)) : matching), [matching, area]);
+  const matchingOutings = useMemo(() => {
     const byId = new Map(filtered.map((r) => [r.id, r]));
     return outings.filter((o) => {
       const route = byId.get(o.route.id);
       return route && matchesQuery([...routeHaystack(route), o.title, o.meeting_point_label], query);
     });
   }, [filtered, outings, query]);
+  const visibleOutings = useMemo(() => {
+    if (!area) return matchingOutings;
+    const inside = new Set(filtered.filter((r) => inArea(r, area)).map((r) => r.id));
+    return matchingOutings.filter((o) => inside.has(o.route.id));
+  }, [matchingOutings, area, filtered]);
   const mapRoutes = useMemo(() => {
-    if (tab === "rutas") return visible;
-    const withOutings = new Set(visibleOutings.map((o) => o.route.id));
+    if (tab === "rutas") return matching;
+    const withOutings = new Set(matchingOutings.map((o) => o.route.id));
     return filtered.filter((r) => withOutings.has(r.id));
-  }, [tab, visible, filtered, visibleOutings]);
+  }, [tab, matching, filtered, matchingOutings]);
   const selected = mapRoutes.find((r) => r.id === selectedId) ?? null;
   const router = useRouter();
 
@@ -150,6 +170,13 @@ export function Explorer({ routes, outings }: { routes: RouteSummary[]; outings:
               Más filtros
               {panelCount > 0 && <span className="rounded-full bg-primary px-1.5 text-[10px] font-bold text-on-primary">{panelCount}</span>}
             </button>
+            {area && (
+              <Chip active onClick={() => setParams({ [AREA_KEY]: null })}>
+                <MapPinned className="size-3.5" aria-hidden />
+                Zona del mapa
+                <X className="size-3.5" aria-label="Quitar" />
+              </Chip>
+            )}
             <span className="mx-1 h-5 w-px shrink-0 bg-outline-variant" aria-hidden />
             <Chip active={!difficulty} onClick={() => setParams({ [DIFFICULTY_KEY]: null })}>
               Todo
@@ -204,7 +231,11 @@ export function Explorer({ routes, outings }: { routes: RouteSummary[]; outings:
                 </div>
               ) : (
                 <Empty>
-                  {filtering ? "Ninguna ruta coincide con tu búsqueda." : "Todavía no hay rutas publicadas."}{" "}
+                  {area && matching.length
+                    ? "No hay rutas en esta zona del mapa. Aléjate un poco y busca de nuevo."
+                    : filtering
+                      ? "Ninguna ruta coincide con tu búsqueda."
+                      : "Todavía no hay rutas publicadas."}{" "}
                   {filtering && <ClearLink onClick={() => setParams(CLEARED)} />}
                 </Empty>
               )}
@@ -253,7 +284,29 @@ export function Explorer({ routes, outings }: { routes: RouteSummary[]; outings:
             view === "lista" && "hidden",
           )}
         >
-          <RouteMap routes={mapRoutes} selectedId={selectedId} onSelect={selectOrOpen} track={selected ? (tracks[selected.id] ?? null) : null} />
+          <RouteMap
+            routes={mapRoutes}
+            selectedId={selectedId}
+            onSelect={selectOrOpen}
+            track={selected ? (tracks[selected.id] ?? null) : null}
+            area={area}
+            onUserMove={setMoved}
+          />
+          {canSearchArea && (
+            <button
+              type="button"
+              onClick={() => {
+                if (!moved) return;
+                setParams({ [AREA_KEY]: formatArea(moved) });
+                setMoved(null);
+                setView("lista");
+              }}
+              className="absolute top-4 left-1/2 z-10 flex -translate-x-1/2 items-center gap-2 rounded-full bg-surface-container-lowest px-4 py-2 font-headline text-sm font-semibold text-on-surface shadow-lg ring-1 ring-outline-variant/60 transition-transform hover:scale-105 active:scale-95"
+            >
+              <Search className="size-4 text-primary" aria-hidden />
+              Buscar en esta zona
+            </button>
+          )}
           {selected && <MapPeek route={selected} />}
         </section>
 
