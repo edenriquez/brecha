@@ -19,6 +19,7 @@ import { createClient } from "@/lib/supabase/server";
 import { DIFFICULTY, formatDuration, formatKm, googleMapsSearch } from "@/lib/routes";
 import { LEVEL, outingDateParts, PACE, spotsLabel } from "@/lib/outings";
 import { getOuting } from "@/lib/outings.server";
+import { personName, profileHref } from "@/lib/profiles";
 
 type Props = { params: Promise<{ id: string }> };
 
@@ -134,13 +135,17 @@ export default async function OutingPage({ params }: Props) {
 
         <div className="grid grid-cols-1 items-start gap-8 lg:grid-cols-12">
           <div className="space-y-6 lg:col-span-7">
-            <section className="flex items-center gap-4 rounded-2xl border border-outline-variant/70 bg-surface-container-lowest p-5 shadow-xs">
+            <Link
+              href={profileHref(outing.organizer.id)}
+              className="group flex items-center gap-4 rounded-2xl border border-outline-variant/70 bg-surface-container-lowest p-5 shadow-xs transition-colors hover:border-primary-container"
+            >
               <Avatar person={outing.organizer} size={52} />
               <div>
                 <p className="text-[11px] font-bold tracking-wider text-on-surface-variant uppercase">Organiza</p>
-                <p className="font-headline text-lg font-bold">{isOrganizer ? "Tú" : (outing.organizer.display_name ?? "Senderista de Brecha")}</p>
+                <p className="font-headline text-lg font-bold group-hover:text-primary">{isOrganizer ? "Tú" : personName(outing.organizer)}</p>
               </div>
-            </section>
+              <span className="ml-auto text-xs font-semibold text-primary">Ver perfil</span>
+            </Link>
 
             <section className="rounded-2xl border border-outline-variant/70 bg-surface-container-lowest p-6 shadow-xs">
               <h2 className="mb-4 flex items-center gap-2 font-headline text-lg font-bold">
@@ -213,8 +218,10 @@ export default async function OutingPage({ params }: Props) {
               </p>
               <ul className="flex flex-wrap gap-2">
                 {outing.attendees.map((p) => (
-                  <li key={p.id} title={p.display_name ?? undefined}>
-                    <Avatar person={p} size={36} />
+                  <li key={p.id}>
+                    <Link href={profileHref(p.id)} title={personName(p)} aria-label={personName(p)} className="block rounded-full transition-transform hover:scale-110">
+                      <Avatar person={p} size={36} />
+                    </Link>
                   </li>
                 ))}
               </ul>

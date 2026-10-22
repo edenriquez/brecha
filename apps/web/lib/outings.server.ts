@@ -2,6 +2,7 @@ import "server-only";
 import { cache } from "react";
 import { createAnonClient, type createClient } from "@/lib/supabase/server";
 import type { MyOuting, OutingCardData, OutingDetail, OutingSummary, Person } from "@/lib/outings";
+import { PERSON_COLUMNS } from "@/lib/profiles";
 
 const ROUTE_COLUMNS = "id, slug, name, place_label, difficulty, cover_url, distance_km, elevation_gain_m, duration_min";
 const SUMMARY_COLUMNS = "id, title, starts_at, meeting_point_label, capacity, outing_members(count)";
@@ -39,6 +40,13 @@ export async function listAllUpcomingOutings(): Promise<OutingCardData[]> {
   return (data as unknown as CardRow[]).map(withMembers);
 }
 
+/** Próximas salidas abiertas que convoca alguien, para su perfil. */
+export async function listUpcomingOutingsBy(organizerId: string): Promise<OutingCardData[]> {
+  const { data, error } = await upcoming(`${SUMMARY_COLUMNS}, route:routes!inner(${ROUTE_COLUMNS})`).eq("organizer_id", organizerId).order("starts_at").limit(6);
+  if (error) throw new Error(`outings de ${organizerId}: ${error.message}`);
+  return (data as unknown as CardRow[]).map(withMembers);
+}
+
 /** Salidas donde estoy inscrito (quien organiza también lo está). `mine` filtra; outing_members(count) sigue contando a todos. */
 export async function listMyOutings(supabase: Awaited<ReturnType<typeof createClient>>, userId: string): Promise<MyOuting[]> {
   const { data, error } = await supabase
@@ -58,8 +66,8 @@ export const getOuting = cache(async (id: string): Promise<OutingDetail | null> 
     .select(
       `id, title, starts_at, meeting_point_label, capacity, level, pace, notes, status, updated_at,
        route:routes!inner(${ROUTE_COLUMNS}),
-       organizer:profiles!outings_organizer_id_fkey(id, display_name, avatar_url),
-       outing_members(joined_at, person:profiles(id, display_name, avatar_url))`,
+       organizer:profiles!outings_organizer_id_fkey(${PERSON_COLUMNS}),
+       outing_members(joined_at, person:profiles(${PERSON_COLUMNS}))`,
     )
     .eq("id", id)
     .order("joined_at", { referencedTable: "outing_members" })

@@ -4,6 +4,8 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import clsx from "clsx";
 import { ArrowLeftRight, CalendarPlus, Clock, Download, Map as MapIcon, MapPin, Megaphone, Mountain, Navigation, Ruler, TrendingUp, Users } from "lucide-react";
+import { Avatar } from "@/components/avatar";
+import { FavoriteButton } from "@/components/favorite-button";
 import { StartPointMap } from "@/components/route-map-lazy";
 import { RouteFeedback } from "@/components/route-feedback";
 import { RoutePhotos } from "@/components/route-photos";
@@ -14,6 +16,8 @@ import { TrailConditions } from "@/components/trail-conditions";
 import { DIFFICULTY, formatDuration, formatKm, googleMapsDirections, ROUTE_TYPE } from "@/lib/routes";
 import { outingDateParts, spotsLabel, type OutingSummary } from "@/lib/outings";
 import { listUpcomingOutings } from "@/lib/outings.server";
+import { personName, profileHref } from "@/lib/profiles";
+import { getProfile } from "@/lib/profiles.server";
 import { getRoute, getRouteCommunity, getRouteShape } from "@/lib/routes.server";
 import { createAnonClient } from "@/lib/supabase/server";
 
@@ -40,7 +44,12 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
 export default async function RoutePage({ params }: Props) {
   const route = await getRoute((await params).slug);
   if (!route) notFound();
-  const [outings, shape, community] = await Promise.all([listUpcomingOutings(route.id), getRouteShape(createAnonClient(), route.slug), getRouteCommunity(route.id)]);
+  const [outings, shape, community, uploader] = await Promise.all([
+    listUpcomingOutings(route.id),
+    getRouteShape(createAnonClient(), route.slug),
+    getRouteCommunity(route.id),
+    route.created_by ? getProfile(route.created_by) : null,
+  ]);
   const difficulty = DIFFICULTY[route.difficulty];
   const target = { id: route.id, slug: route.slug };
   // sin portada, la foto más reciente de la comunidad
@@ -67,8 +76,20 @@ export default async function RoutePage({ params }: Props) {
               <MapPin className="size-4 text-outline" aria-hidden />
               {route.place_label}
             </p>
+            {uploader && (
+              <p className="flex items-center gap-1.5 text-xs text-on-surface-variant">
+                <Avatar person={uploader} size={20} className="border-0" />
+                Compartida por
+                <Link href={profileHref(uploader.id)} className="font-semibold text-on-surface hover:text-primary">
+                  {personName(uploader)}
+                </Link>
+              </p>
+            )}
           </div>
-          <ShareButton title={route.name} />
+          <div className="flex gap-2">
+            <FavoriteButton routeId={route.id} slug={route.slug} variant="detail" />
+            <ShareButton title={route.name} />
+          </div>
         </section>
 
         <section className="relative mb-8 h-[280px] overflow-hidden rounded-2xl border border-outline-variant/60 bg-surface-container shadow-xs sm:h-[380px] md:h-[460px]">

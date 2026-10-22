@@ -45,7 +45,7 @@ export function OutingForm({
   askRules = false,
 }: {
   route: OutingRoute;
-  organizer: Pick<Person, "display_name" | "avatar_url">;
+  organizer: Pick<Person, "display_name" | "avatar_url" | "avatar_path">;
   editing?: { id: string; members: number; fields: OutingFields };
   askRules?: boolean;
 }) {

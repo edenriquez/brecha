@@ -7,6 +7,7 @@ import { Camera, ChevronLeft, ChevronRight, ImagePlus, Loader2, Trash2, X } from
 import { Avatar } from "@/components/avatar";
 import { addRoutePhotos, deleteRoutePhoto, type CommunityState } from "@/app/rutas/community-actions";
 import { PHOTOS_PER_UPLOAD, type RoutePhoto } from "@/lib/community";
+import { personName, profileHref } from "@/lib/profiles";
 import { shrinkPhoto } from "@/lib/shrink-photo";
 import { createClient } from "@/lib/supabase/client";
 import { useIsAdmin, useSessionUser } from "@/lib/use-session-user";
@@ -338,7 +339,10 @@ function Lightbox({
         <div className="min-w-0">
           {photo.caption && <p className="text-sm">{photo.caption}</p>}
           <p className="text-xs text-white/70">
-            {photo.author.display_name ?? "Senderista de Brecha"} ·{" "}
+            <Link href={profileHref(photo.author.id)} className="font-semibold text-white hover:underline">
+              {personName(photo.author)}
+            </Link>{" "}
+            ·{" "}
             {new Intl.DateTimeFormat("es-MX", { timeZone: "America/Mexico_City", day: "numeric", month: "long", year: "numeric" }).format(new Date(photo.created_at))}
           </p>
           {error && <p className="text-xs font-semibold text-red-300">{error}</p>}

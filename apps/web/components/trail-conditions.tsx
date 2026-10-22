@@ -8,6 +8,7 @@ import { Avatar } from "@/components/avatar";
 import { deleteTrailReport, reportTrailConditions, type CommunityState } from "@/app/rutas/community-actions";
 import { daysAgoLabel, RECENT_REPORT_DAYS, REPORT_WINDOW_DAYS, shiftDay, TRAIL_ISSUES, TRAIL_STATUS, type TrailIssue, type TrailReport, type TrailStatus } from "@/lib/community";
 import { todayInMexicoCity } from "@/lib/outings";
+import { personName, profileHref } from "@/lib/profiles";
 import { useIsAdmin, useSessionUser } from "@/lib/use-session-user";
 
 type Target = { id: string; slug: string };
@@ -116,8 +117,10 @@ function ReportBody({ report, slug, canDelete }: { report: TrailReport; slug: st
       )}
       {report.note && <p className="text-sm leading-relaxed whitespace-pre-line text-on-surface">{report.note}</p>}
       <div className="flex items-center gap-2 text-[11px] text-on-surface-variant">
-        <Avatar person={report.author} size={20} className="border-0" />
-        {report.author.display_name ?? "Senderista de Brecha"}
+        <Link href={profileHref(report.author.id)} className="flex items-center gap-2 hover:text-primary">
+          <Avatar person={report.author} size={20} className="border-0" />
+          {personName(report.author)}
+        </Link>
         {canDelete && (
           <button type="button" onClick={remove} disabled={pending} className="ml-auto flex items-center gap-1 font-semibold hover:text-error disabled:opacity-50">
             <Trash2 className="size-3.5" aria-hidden />

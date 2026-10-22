@@ -46,7 +46,7 @@ export async function addRoutePhotos(route: Target, _prev: CommunityState, form:
   return { error: null, done: true };
 }
 
-/** Quien la subió o la moderación. El archivo solo lo puede borrar quien lo subió; para la moderación basta con quitar la fila. */
+/** Quien la subió o la moderación; las políticas de storage dejan a ambos borrar también el archivo. */
 export async function deleteRoutePhoto(photo: { id: string; path: string; slug: string }): Promise<CommunityState> {
   const { supabase } = await requireUser(`/rutas/${photo.slug}`);
   const { data, error } = await supabase.from("route_photos").delete().eq("id", photo.id).select("id");
