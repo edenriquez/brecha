@@ -5,6 +5,7 @@ import { notFound } from "next/navigation";
 import clsx from "clsx";
 import { ArrowLeftRight, CalendarPlus, Clock, Download, Map as MapIcon, MapPin, Megaphone, Mountain, Navigation, Ruler, TrendingUp, Users } from "lucide-react";
 import { StartPointMap } from "@/components/route-map-lazy";
+import { RouteFeedback } from "@/components/route-feedback";
 import { RouteTrack } from "@/components/route-track";
 import { ShareButton } from "@/components/share-button";
 import { TopNav } from "@/components/top-nav";
@@ -157,6 +158,8 @@ export default async function RoutePage({ params }: Props) {
                 )}
               </div>
             )}
+
+            <RouteFeedback route={{ id: route.id, slug: route.slug, created_by: route.created_by }} />
           </div>
 
           <aside className="space-y-6 lg:sticky lg:top-24 lg:col-span-4">

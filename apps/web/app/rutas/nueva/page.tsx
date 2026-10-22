@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { ArrowLeft, Route } from "lucide-react";
-import { RouteUploader } from "@/components/route-uploader";
+import { RouteForm } from "@/components/route-form";
 import { TopNav } from "@/components/top-nav";
 import { requireUser } from "@/lib/auth.server";
 
@@ -26,7 +26,7 @@ export default async function NewRoutePage() {
           <h1 className="font-headline text-3xl font-extrabold tracking-tight sm:text-4xl">Sube una ruta</h1>
           <p className="mt-1.5 text-on-surface-variant">Comparte un sendero que conoces para que otros lo caminen y convoquen salidas.</p>
         </div>
-        <RouteUploader userId={user.id} />
+        <RouteForm userId={user.id} />
       </main>
     </div>
   );

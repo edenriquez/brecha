@@ -3,7 +3,7 @@ import { cache } from "react";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { LineString } from "geojson";
 import { createAnonClient } from "@/lib/supabase/server";
-import type { RouteDetail, RouteShape, RouteSummary } from "@/lib/routes";
+import { ROUTE_FIELDS_COLUMNS, toRouteFields, type RouteDetail, type RouteFields, type RouteShape, type RouteStatus, type RouteSummary } from "@/lib/routes";
 
 const SUMMARY_COLUMNS = "id, slug, name, place_label, difficulty, route_type, distance_km, elevation_gain_m, duration_min, cover_url, tags, lat, lng, upcoming_outings";
 
@@ -24,10 +24,30 @@ export async function listRoutes(): Promise<RouteSummary[]> {
 /** Ruta publicada por slug; null si no existe. cache(): la piden generateMetadata y la página en el mismo render. */
 export const getRoute = cache(async (slug: string): Promise<RouteDetail | null> => {
   const supabase = createAnonClient();
-  const { data, error } = await supabase.from("routes_feed").select(`${SUMMARY_COLUMNS}, description`).eq("slug", slug).maybeSingle();
+  const { data, error } = await supabase.from("routes_feed").select(`${SUMMARY_COLUMNS}, description, created_by`).eq("slug", slug).maybeSingle();
   if (error) throw new Error(`routes_feed ${slug}: ${error.message}`);
   return data as RouteDetail | null;
 });
+
+export type OwnRoute = Pick<RouteSummary, "id" | "slug" | "distance_km" | "elevation_gain_m"> & {
+  status: RouteStatus;
+  created_by: string | null;
+  review_note: string | null;
+  fields: RouteFields;
+};
+
+/** Ruta en cualquier estado con la sesión del usuario: el RLS deja ver las propias y, a la moderación, todas. */
+export async function getOwnRoute(supabase: SupabaseClient, slug: string): Promise<OwnRoute | null> {
+  const { data, error } = await supabase
+    .from("routes")
+    .select(`id, slug, distance_km, elevation_gain_m, status, created_by, review_note, ${ROUTE_FIELDS_COLUMNS}`)
+    .eq("slug", slug)
+    .maybeSingle();
+  if (error) throw new Error(`routes ${slug}: ${error.message}`);
+  if (!data) return null;
+  const row = data as unknown as Omit<OwnRoute, "fields"> & Parameters<typeof toRouteFields>[0];
+  return { id: row.id, slug: row.slug, distance_km: row.distance_km, elevation_gain_m: row.elevation_gain_m, status: row.status, created_by: row.created_by, review_note: row.review_note, fields: toRouteFields(row) };
+}
 
 /** Trazo, perfil y enlace de descarga del GPX; null si la ruta no tiene trazo. */
 export async function getRouteShape(supabase: SupabaseClient, slug: string): Promise<RouteShape | null> {

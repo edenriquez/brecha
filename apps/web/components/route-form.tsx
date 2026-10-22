@@ -1,14 +1,16 @@
 "use client";
 
 import { startTransition, useActionState, useEffect, useMemo, useRef, useState, type DragEvent, type FormEvent } from "react";
+import Image from "next/image";
 import clsx from "clsx";
 import { ArrowDown, ArrowUp, CheckCircle2, FileUp, ImagePlus, Loader2, Mountain, Ruler, Send, TriangleAlert, X } from "lucide-react";
-import { createRoute, type RouteActionState } from "@/app/rutas/actions";
+import { createRoute, updateRoute, type RouteActionState } from "@/app/rutas/actions";
 import { ElevationProfile } from "@/components/elevation-profile";
 import { TrackMap } from "@/components/route-map-lazy";
 import { fillElevationFromDem } from "@/lib/dem";
-import { analyzeTrack, GpxError, packPoints, parseGpx, parseGpxName, suggestDifficulty, type TrackAnalysis } from "@/lib/gpx";
-import { DIFFICULTY, formatKm, ROUTE_TYPE, type Difficulty, type RouteSummary } from "@/lib/routes";
+import { analyzeTrack, GpxError, packPoints, parseGpx, parseGpxName, suggestDifficulty, type ProfilePoint, type TrackAnalysis } from "@/lib/gpx";
+import type { LineCoords } from "@/lib/maplibre";
+import { DIFFICULTY, formatKm, ROUTE_TYPE, type Difficulty, type RouteFields, type RouteStatus, type RouteSummary } from "@/lib/routes";
 import { createClient } from "@/lib/supabase/client";
 
 const input =
@@ -20,29 +22,54 @@ const GPX_MAX = 5 * 1024 * 1024;
 const PHOTO_MAX = 10 * 1024 * 1024;
 const PHOTO_TYPES: Record<string, string> = { "image/jpeg": "jpg", "image/png": "png", "image/webp": "webp" };
 
-type Loaded = { file: File; track: TrackAnalysis; demElevation: boolean };
+const EMPTY: RouteFields = { name: "", place_label: "", difficulty: "moderada", route_type: "ida_vuelta", duration_min: 0, description: "", tags: "", cover_url: null };
+
+export type TrackPreview = {
+  line: LineCoords;
+  profile: ProfilePoint[] | null;
+  distanceKm: number;
+  gainM: number | null;
+};
+
+export type EditingRoute = {
+  id: string;
+  slug: string;
+  status: RouteStatus;
+  fields: RouteFields;
+  track: TrackPreview | null;
+  /** Una ruta publicada conserva su trazo; la moderación sí puede cambiarlo */
+  canEditTrack: boolean;
+};
+
+type Loaded = { file: File; analysis: TrackAnalysis; demElevation: boolean };
 type RouteType = RouteSummary["route_type"];
 
-export function RouteUploader({ userId }: { userId: string }) {
-  const [state, formAction, saving] = useActionState<RouteActionState, FormData>(createRoute, { error: null });
+/** Sin `editing` sube una ruta nueva desde un GPX; con él edita una existente. */
+export function RouteForm({ userId, editing }: { userId: string; editing?: EditingRoute }) {
+  const action = editing ? updateRoute.bind(null, { id: editing.id, slug: editing.slug }) : createRoute;
+  const [state, formAction, saving] = useActionState<RouteActionState, FormData>(action, { error: null });
+  const initial = editing?.fields ?? EMPTY;
+  const canEditTrack = editing?.canEditTrack ?? true;
+
   const [loaded, setLoaded] = useState<Loaded | null>(null);
+  const [replacing, setReplacing] = useState(false);
   const [reading, setReading] = useState<string | null>(null);
   const [fileError, setFileError] = useState<string | null>(null);
   const [uploading, setUploading] = useState(false);
   const [uploadError, setUploadError] = useState<string | null>(null);
-  const [dragging, setDragging] = useState(false);
   const [active, setActive] = useState<number | null>(null);
 
-  const [name, setName] = useState("");
-  const [placeLabel, setPlaceLabel] = useState("");
-  const [difficulty, setDifficulty] = useState<Difficulty>("moderada");
+  const [name, setName] = useState(initial.name);
+  const [placeLabel, setPlaceLabel] = useState(initial.place_label);
+  const [difficulty, setDifficulty] = useState<Difficulty>(initial.difficulty);
   const [suggested, setSuggested] = useState<Difficulty | null>(null);
-  const [routeType, setRouteType] = useState<RouteType>("ida_vuelta");
-  const [hours, setHours] = useState(0);
-  const [minutes, setMinutes] = useState(0);
-  const [description, setDescription] = useState("");
-  const [tags, setTags] = useState("");
+  const [routeType, setRouteType] = useState<RouteType>(initial.route_type);
+  const [hours, setHours] = useState(Math.floor(initial.duration_min / 60));
+  const [minutes, setMinutes] = useState(initial.duration_min % 60);
+  const [description, setDescription] = useState(initial.description);
+  const [tags, setTags] = useState(initial.tags);
   const [photo, setPhoto] = useState<{ file: File; url: string } | null>(null);
+  const [removeCover, setRemoveCover] = useState(false);
   // un reintento tras un error de validación no vuelve a subir los mismos archivos
   const uploaded = useRef(new Map<File, string>());
 
@@ -50,9 +77,13 @@ export function RouteUploader({ userId }: { userId: string }) {
     if (photo) return () => URL.revokeObjectURL(photo.url);
   }, [photo]);
 
-  const line = useMemo(() => loaded?.track.points.map((p) => [p.lng, p.lat] as [number, number]) ?? [], [loaded]);
-  const profile = loaded?.track.profile ?? null;
-  const point = active !== null && profile ? profile[active] : null;
+  const preview = useMemo<TrackPreview | null>(() => {
+    if (!loaded) return editing?.track ?? null;
+    const { analysis } = loaded;
+    return { line: analysis.points.map((p) => [p.lng, p.lat] as [number, number]), profile: analysis.profile, distanceKm: analysis.distanceKm, gainM: analysis.gainM };
+  }, [loaded, editing]);
+  const point = active !== null && preview?.profile ? preview.profile[active] : null;
+  const eles = preview?.profile?.map((p) => p[1]);
 
   async function readGpx(file: File) {
     setFileError(null);
@@ -60,38 +91,35 @@ export function RouteUploader({ userId }: { userId: string }) {
     setReading("Leyendo el GPX…");
     try {
       const xml = await file.text();
-      let track = analyzeTrack(parseGpx(xml));
+      let analysis = analyzeTrack(parseGpx(xml));
       let demElevation = false;
-      if (!track.profile) {
+      if (!analysis.profile) {
         setReading("El GPX no trae altitud: la calculamos con el modelo de elevación…");
         try {
-          track = analyzeTrack(await fillElevationFromDem(track.points), { resampled: true });
+          analysis = analyzeTrack(await fillElevationFromDem(analysis.points), { resampled: true });
           demElevation = true;
         } catch {
           // sin modelo de elevación la ruta se guarda sin perfil ni desnivel
         }
       }
-      setLoaded({ file, track, demElevation });
+      setLoaded({ file, analysis, demElevation });
+      setReplacing(false);
       setActive(null);
       setName((n) => n || (parseGpxName(xml) ?? file.name.replace(/\.gpx$/i, "").replace(/[-_]+/g, " ")).slice(0, 80));
-      const level = suggestDifficulty(track.distanceKm, track.gainM ?? 0, track.maxEle);
-      setDifficulty(level);
+      const level = suggestDifficulty(analysis.distanceKm, analysis.gainM ?? 0, analysis.maxEle);
       setSuggested(level);
-      setRouteType(track.routeType);
-      setHours(Math.floor(track.durationMin / 60));
-      setMinutes(track.durationMin % 60);
+      setRouteType(analysis.routeType);
+      // al editar, lo que ya escribió quien la subió manda sobre la estimación
+      if (!editing) {
+        setDifficulty(level);
+        setHours(Math.floor(analysis.durationMin / 60));
+        setMinutes(analysis.durationMin % 60);
+      }
     } catch (e) {
       setFileError(e instanceof GpxError ? e.message : "No pudimos leer el archivo. ¿Es un GPX?");
     } finally {
       setReading(null);
     }
-  }
-
-  function onDrop(e: DragEvent) {
-    e.preventDefault();
-    setDragging(false);
-    const file = e.dataTransfer.files[0];
-    if (file) readGpx(file);
   }
 
   function pickPhoto(file: File | undefined) {
@@ -114,13 +142,17 @@ export function RouteUploader({ userId }: { userId: string }) {
 
   async function onSubmit(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
-    if (!loaded) return;
+    if (!editing && !loaded) return;
     const form = new FormData(e.currentTarget);
     setUploading(true);
     setUploadError(null);
     try {
-      form.set("gpx_path", await upload("route-tracks", loaded.file, "gpx", "application/gpx+xml"));
+      if (loaded) {
+        form.set("gpx_path", await upload("route-tracks", loaded.file, "gpx", "application/gpx+xml"));
+        form.set("points", JSON.stringify(packPoints(loaded.analysis.points)));
+      }
       if (photo) form.set("cover_path", await upload("route-photos", photo.file, PHOTO_TYPES[photo.file.type], photo.file.type));
+      else if (removeCover) form.set("remove_cover", "1");
     } catch (err) {
       console.error("upload:", err);
       setUploadError("No pudimos subir los archivos. Revisa tu conexión e intenta de nuevo.");
@@ -128,50 +160,13 @@ export function RouteUploader({ userId }: { userId: string }) {
     } finally {
       setUploading(false);
     }
-    form.set("points", JSON.stringify(packPoints(loaded.track.points)));
     startTransition(() => formAction(form));
   }
 
-  if (!loaded) {
+  if (!editing && !loaded) {
     return (
       <div className="mx-auto max-w-2xl space-y-4">
-        <label
-          onDragOver={(e) => {
-            e.preventDefault();
-            setDragging(true);
-          }}
-          onDragLeave={() => setDragging(false)}
-          onDrop={onDrop}
-          className={clsx(
-            "flex cursor-pointer flex-col items-center gap-4 rounded-2xl border-2 border-dashed bg-surface-container-lowest px-6 py-14 text-center transition-colors",
-            dragging ? "border-primary bg-primary-fixed/20" : "border-outline-variant hover:border-primary-container",
-          )}
-        >
-          <span className="flex size-14 items-center justify-center rounded-full bg-primary-fixed/60 text-primary">
-            {reading ? <Loader2 className="size-7 animate-spin" aria-hidden /> : <FileUp className="size-7" aria-hidden />}
-          </span>
-          <span>
-            <span className="block font-headline text-lg font-bold">{reading ?? "Arrastra aquí el GPX de la ruta"}</span>
-            {!reading && <span className="mt-1 block text-sm text-on-surface-variant">o haz clic para elegirlo · máximo 5 MB</span>}
-          </span>
-          <input
-            type="file"
-            accept=".gpx,application/gpx+xml"
-            disabled={!!reading}
-            onChange={(e) => {
-              const file = e.target.files?.[0];
-              e.target.value = "";
-              if (file) readGpx(file);
-            }}
-            className="sr-only"
-          />
-        </label>
-        {fileError && (
-          <p role="alert" className="flex items-center gap-2 rounded-lg bg-error/10 px-3.5 py-2.5 text-sm font-semibold text-error">
-            <TriangleAlert className="size-4 shrink-0" aria-hidden />
-            {fileError}
-          </p>
-        )}
+        <Dropzone reading={reading} error={fileError} onFile={readGpx} />
         <p className="text-center text-xs text-on-surface-variant">
           Exporta el track desde Wikiloc, Strava, AllTrails, Komoot o tu reloj. Calculamos distancia, desnivel, tipo y duración a partir del archivo.
         </p>
@@ -179,9 +174,17 @@ export function RouteUploader({ userId }: { userId: string }) {
     );
   }
 
-  const { track } = loaded;
   const busy = uploading || saving;
   const error = uploadError ?? state.error;
+  const cover = photo?.url ?? (removeCover ? null : initial.cover_url);
+  const submitLabel = !editing ? "Enviar a revisión" : editing.status === "rechazada" ? "Guardar y enviar a revisión" : "Guardar cambios";
+  const footnote = !editing
+    ? "La ruta aparece en el mapa cuando la revisemos."
+    : editing.status === "publicada"
+      ? "Los cambios se ven en la ruta al guardar."
+      : editing.status === "rechazada"
+        ? "Al guardar, la ruta vuelve a revisión."
+        : "La ruta sigue en revisión.";
 
   return (
     <div className="grid grid-cols-1 items-start gap-8 lg:grid-cols-12">
@@ -192,6 +195,7 @@ export function RouteUploader({ userId }: { userId: string }) {
               Nombre de la ruta
             </label>
             <input id="name" name="name" required minLength={3} maxLength={80} value={name} onChange={(e) => setName(e.target.value)} placeholder="Cerro del Tepozteco" className={input} />
+            {editing?.status === "publicada" && <p className={hint}>La dirección de la página no cambia aunque cambies el nombre.</p>}
           </div>
 
           <div>
@@ -234,7 +238,7 @@ export function RouteUploader({ userId }: { userId: string }) {
                 </label>
               ))}
             </div>
-            <p className={hint}>La sugerimos por distancia, desnivel y altura; ajústala si conoces el terreno.</p>
+            {suggested && <p className={hint}>La sugerimos por distancia, desnivel y altura; ajústala si conoces el terreno.</p>}
           </fieldset>
 
           <fieldset>
@@ -266,7 +270,7 @@ export function RouteUploader({ userId }: { userId: string }) {
               <input name="minutes" type="number" aria-label="Minutos" required min={0} max={45} step={15} value={minutes} onChange={(e) => setMinutes(Number(e.target.value))} className={clsx(input, "max-w-20")} />
               <span className="text-sm text-on-surface-variant">min</span>
             </div>
-            <p className={hint}>Estimada con el método MIDE (4 km/h en plano, 400 m/h de subida), sin contar paradas.</p>
+            {loaded && !editing && <p className={hint}>Estimada con el método MIDE (4 km/h en plano, 400 m/h de subida), sin contar paradas.</p>}
           </fieldset>
 
           <div>
@@ -297,13 +301,17 @@ export function RouteUploader({ userId }: { userId: string }) {
             <span className={label}>
               Foto de portada <span className="font-body font-normal text-on-surface-variant">(opcional)</span>
             </span>
-            {photo ? (
+            {cover ? (
               <div className="relative h-44 overflow-hidden rounded-xl border border-outline-variant">
-                {/* eslint-disable-next-line @next/next/no-img-element -- vista previa local (blob:) */}
-                <img src={photo.url} alt="Foto de portada elegida" className="h-full w-full object-cover" />
+                {photo ? (
+                  // eslint-disable-next-line @next/next/no-img-element -- vista previa local (blob:)
+                  <img src={photo.url} alt="Foto de portada elegida" className="h-full w-full object-cover" />
+                ) : (
+                  <Image src={cover} alt="Foto de portada actual" fill sizes="(min-width: 1024px) 40vw, 100vw" className="object-cover" />
+                )}
                 <button
                   type="button"
-                  onClick={() => setPhoto(null)}
+                  onClick={() => (photo ? setPhoto(null) : setRemoveCover(true))}
                   aria-label="Quitar foto"
                   className="absolute top-2 right-2 flex size-8 items-center justify-center rounded-full bg-on-surface/70 text-surface hover:bg-on-surface"
                 >
@@ -322,60 +330,129 @@ export function RouteUploader({ userId }: { userId: string }) {
 
         <div className="flex flex-col items-stretch gap-3 rounded-xl border border-outline-variant bg-surface-container-lowest p-4 shadow-sm sm:flex-row sm:items-center sm:justify-between">
           <p className="text-xs text-on-surface-variant" role={error ? "alert" : undefined}>
-            {error ? <span className="font-semibold text-error">{error}</span> : "La ruta aparece en el mapa cuando la revisemos."}
+            {error ? <span className="font-semibold text-error">{error}</span> : footnote}
           </p>
           <button
             disabled={busy}
             className="flex items-center justify-center gap-2 rounded-lg bg-secondary-container px-5 py-2.5 font-headline text-sm font-bold text-on-secondary shadow-sm transition-colors hover:bg-secondary disabled:opacity-60"
           >
             {busy ? <Loader2 className="size-4 animate-spin" aria-hidden /> : <Send className="size-4" aria-hidden />}
-            {uploading ? "Subiendo archivos…" : saving ? "Guardando…" : "Enviar a revisión"}
+            {uploading ? "Subiendo archivos…" : saving ? "Guardando…" : submitLabel}
           </button>
         </div>
       </form>
 
       <aside className="order-first lg:order-none lg:col-span-5">
         <div className="space-y-4 lg:sticky lg:top-24">
-          <div className="flex items-center justify-between px-1">
+          <div className="flex items-center justify-between gap-3 px-1">
             <span className="flex min-w-0 items-center gap-2 font-headline text-xs font-bold tracking-wider uppercase">
               <span className="size-2.5 shrink-0 rounded-full bg-primary-container" />
-              <span className="truncate">{loaded.file.name}</span>
+              <span className="truncate">{loaded?.file.name ?? (preview ? "Trazo actual" : "Sin trazo")}</span>
             </span>
-            <button
-              type="button"
-              onClick={() => setLoaded(null)}
-              disabled={busy}
-              className="shrink-0 text-xs font-semibold text-on-surface-variant hover:text-primary disabled:opacity-50"
-            >
-              Cambiar archivo
-            </button>
+            {canEditTrack && (preview || replacing) && (
+              <button
+                type="button"
+                onClick={() => {
+                  setFileError(null);
+                  setReplacing((r) => !r);
+                }}
+                disabled={busy || !!reading}
+                className="shrink-0 text-xs font-semibold text-on-surface-variant hover:text-primary disabled:opacity-50"
+              >
+                {replacing ? "Cancelar" : "Cambiar GPX"}
+              </button>
+            )}
           </div>
-          <div className="overflow-hidden rounded-xl border border-outline-variant/70 bg-surface-container-lowest shadow-sm">
-            <div className="relative h-64 bg-[#e3e8e1] sm:h-72">
-              <TrackMap line={line} hover={point ? [point[2], point[3]] : null} />
+
+          {replacing || !preview ? (
+            canEditTrack ? (
+              <Dropzone reading={reading} error={fileError} onFile={readGpx} compact />
+            ) : (
+              <p className="rounded-xl border border-outline-variant/70 bg-surface-container-lowest p-4 text-sm text-on-surface-variant">Esta ruta no tiene trazo GPX.</p>
+            )
+          ) : (
+            <div className="overflow-hidden rounded-xl border border-outline-variant/70 bg-surface-container-lowest shadow-sm">
+              <div className="relative h-64 bg-[#e3e8e1] sm:h-72">
+                <TrackMap line={preview.line} hover={point ? [point[2], point[3]] : null} />
+              </div>
+              <dl className="grid grid-cols-2 gap-3 border-t border-outline-variant/50 p-4 sm:grid-cols-4">
+                <Stat icon={<Ruler className="size-3.5" />} label="Distancia" value={formatKm(Math.round(preview.distanceKm * 10) / 10)} />
+                <Stat icon={<ArrowUp className="size-3.5" />} label="Desnivel" value={preview.gainM === null ? "—" : `${preview.gainM.toLocaleString("es-MX")} m`} />
+                <Stat icon={<Mountain className="size-3.5" />} label="Máxima" value={eles ? `${Math.max(...eles).toLocaleString("es-MX")} m` : "—"} />
+                <Stat icon={<ArrowDown className="size-3.5" />} label="Mínima" value={eles ? `${Math.min(...eles).toLocaleString("es-MX")} m` : "—"} />
+              </dl>
+              <div className="border-t border-outline-variant/50 p-4">
+                {preview.profile ? (
+                  <>
+                    <ElevationProfile profile={preview.profile} active={active} onActive={setActive} />
+                    {loaded?.demElevation && <p className="mt-2 text-[11px] text-on-surface-variant">El GPX no traía altitud: la tomamos del modelo de elevación del terreno.</p>}
+                  </>
+                ) : (
+                  <p className="flex items-center gap-2 text-xs text-on-surface-variant">
+                    <TriangleAlert className="size-4 shrink-0 text-secondary" aria-hidden />
+                    El GPX no trae altitud y no pudimos calcularla: la ruta se guardará sin perfil ni desnivel.
+                  </p>
+                )}
+              </div>
             </div>
-            <dl className="grid grid-cols-2 gap-3 border-t border-outline-variant/50 p-4 sm:grid-cols-4">
-              <Stat icon={<Ruler className="size-3.5" />} label="Distancia" value={formatKm(Math.round(track.distanceKm * 10) / 10)} />
-              <Stat icon={<ArrowUp className="size-3.5" />} label="Subida" value={track.gainM === null ? "—" : `${track.gainM.toLocaleString("es-MX")} m`} />
-              <Stat icon={<ArrowDown className="size-3.5" />} label="Bajada" value={track.lossM === null ? "—" : `${track.lossM.toLocaleString("es-MX")} m`} />
-              <Stat icon={<Mountain className="size-3.5" />} label="Máxima" value={track.maxEle === null ? "—" : `${track.maxEle.toLocaleString("es-MX")} m`} />
-            </dl>
-            <div className="border-t border-outline-variant/50 p-4">
-              {profile ? (
-                <>
-                  <ElevationProfile profile={profile} active={active} onActive={setActive} />
-                  {loaded.demElevation && <p className="mt-2 text-[11px] text-on-surface-variant">El GPX no traía altitud: la tomamos del modelo de elevación del terreno.</p>}
-                </>
-              ) : (
-                <p className="flex items-center gap-2 text-xs text-on-surface-variant">
-                  <TriangleAlert className="size-4 shrink-0 text-secondary" aria-hidden />
-                  El GPX no trae altitud y no pudimos calcularla: la ruta se guardará sin perfil ni desnivel.
-                </p>
-              )}
-            </div>
-          </div>
+          )}
+          {editing && !canEditTrack && <p className="px-1 text-[11px] text-on-surface-variant">El trazo de una ruta publicada ya no cambia: su dirección y sus salidas dependen de él.</p>}
         </div>
       </aside>
+    </div>
+  );
+}
+
+function Dropzone({ reading, error, onFile, compact }: { reading: string | null; error: string | null; onFile: (file: File) => void; compact?: boolean }) {
+  const [dragging, setDragging] = useState(false);
+
+  function onDrop(e: DragEvent) {
+    e.preventDefault();
+    setDragging(false);
+    const file = e.dataTransfer.files[0];
+    if (file) onFile(file);
+  }
+
+  return (
+    <div className="space-y-3">
+      <label
+        onDragOver={(e) => {
+          e.preventDefault();
+          setDragging(true);
+        }}
+        onDragLeave={() => setDragging(false)}
+        onDrop={onDrop}
+        className={clsx(
+          "flex cursor-pointer flex-col items-center gap-4 rounded-2xl border-2 border-dashed bg-surface-container-lowest px-6 text-center transition-colors",
+          compact ? "py-10" : "py-14",
+          dragging ? "border-primary bg-primary-fixed/20" : "border-outline-variant hover:border-primary-container",
+        )}
+      >
+        <span className="flex size-14 items-center justify-center rounded-full bg-primary-fixed/60 text-primary">
+          {reading ? <Loader2 className="size-7 animate-spin" aria-hidden /> : <FileUp className="size-7" aria-hidden />}
+        </span>
+        <span>
+          <span className={clsx("block font-headline font-bold", compact ? "text-base" : "text-lg")}>{reading ?? "Arrastra aquí el GPX de la ruta"}</span>
+          {!reading && <span className="mt-1 block text-sm text-on-surface-variant">o haz clic para elegirlo · máximo 5 MB</span>}
+        </span>
+        <input
+          type="file"
+          accept=".gpx,application/gpx+xml"
+          disabled={!!reading}
+          onChange={(e) => {
+            const file = e.target.files?.[0];
+            e.target.value = "";
+            if (file) onFile(file);
+          }}
+          className="sr-only"
+        />
+      </label>
+      {error && (
+        <p role="alert" className="flex items-center gap-2 rounded-lg bg-error/10 px-3.5 py-2.5 text-sm font-semibold text-error">
+          <TriangleAlert className="size-4 shrink-0" aria-hidden />
+          {error}
+        </p>
+      )}
     </div>
   );
 }
