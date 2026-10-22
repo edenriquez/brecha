@@ -56,7 +56,7 @@ export const getOuting = cache(async (id: string): Promise<OutingDetail | null> 
   const { data, error } = await createAnonClient()
     .from("outings")
     .select(
-      `id, title, starts_at, meeting_point_label, capacity, level, pace, notes, status,
+      `id, title, starts_at, meeting_point_label, capacity, level, pace, notes, status, updated_at,
        route:routes!inner(${ROUTE_COLUMNS}),
        organizer:profiles!outings_organizer_id_fkey(id, display_name, avatar_url),
        outing_members(joined_at, person:profiles(id, display_name, avatar_url))`,

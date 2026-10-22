@@ -12,6 +12,12 @@ export async function requireUser(next: string) {
   return { supabase, user };
 }
 
+/** Unirse a una salida o convocarla exige haber aceptado las reglas de la comunidad (lo verifica el trigger de inscripción). */
+export async function hasAcceptedRules(supabase: Awaited<ReturnType<typeof createClient>>, userId: string) {
+  const { data } = await supabase.from("profiles").select("rules_accepted_at").eq("id", userId).maybeSingle();
+  return !!data?.rules_accepted_at;
+}
+
 /** Como requireUser, pero solo para la moderación; a los demás la página no existe. */
 export async function requireAdmin(next: string) {
   const session = await requireUser(next);

@@ -6,6 +6,7 @@ import clsx from "clsx";
 import { CheckCircle2, Mountain, Send } from "lucide-react";
 import { Avatar } from "@/components/avatar";
 import { OutingCard } from "@/components/outing-card";
+import { RulesConsent } from "@/components/rules-consent";
 import { createOuting, updateOuting, type ActionState } from "@/app/salidas/actions";
 import { DIFFICULTY, formatDuration, formatKm } from "@/lib/routes";
 import { LEVEL, mexicoCityISO, PACE, todayInMexicoCity, type OutingLevel, type OutingPace, type OutingRoute, type Person } from "@/lib/outings";
@@ -36,15 +37,17 @@ const NEW_OUTING: OutingFields = {
   notes: "",
 };
 
-/** Sin `editing` convoca una salida nueva; con él edita una existente (el cupo no baja de los inscritos). */
+/** Sin `editing` convoca una salida nueva; con él edita una existente (el cupo no baja de los inscritos). `askRules`: falta aceptar las reglas. */
 export function OutingForm({
   route,
   organizer,
   editing,
+  askRules = false,
 }: {
   route: OutingRoute;
   organizer: Pick<Person, "display_name" | "avatar_url">;
   editing?: { id: string; members: number; fields: OutingFields };
+  askRules?: boolean;
 }) {
   const action = editing ? updateOuting.bind(null, { id: editing.id, slug: route.slug }) : createOuting.bind(null, { id: route.id, slug: route.slug });
   const [state, formAction, pending] = useActionState<ActionState, FormData>(action, { error: null });
@@ -167,6 +170,8 @@ export function OutingForm({
             />
           </div>
         </section>
+
+        {askRules && !editing && <RulesConsent />}
 
         <div className="flex flex-col items-stretch gap-3 rounded-xl border border-outline-variant bg-surface-container-lowest p-4 shadow-sm sm:flex-row sm:items-center sm:justify-between">
           <p className="text-xs text-on-surface-variant">

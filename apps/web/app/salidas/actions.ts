@@ -14,6 +14,16 @@ function refreshListings(slug: string) {
   revalidatePath("/");
 }
 
+type Supabase = Awaited<ReturnType<typeof requireUser>>["supabase"];
+
+/** La casilla solo aparece si faltaba aceptar; el trigger de inscripción rechaza a quien no lo haya hecho. */
+async function acceptRulesIfChecked(supabase: Supabase, form: FormData) {
+  if (form.get("accept_rules") !== "on") return true;
+  const { error } = await supabase.rpc("accept_community_rules");
+  if (error) console.error("accept_community_rules:", error.message);
+  return !error;
+}
+
 type OutingValues = {
   title: string;
   starts_at: string;
@@ -59,6 +69,7 @@ export async function createOuting(route: Target, _prev: ActionState, form: Form
   const { supabase, user } = await requireUser(`/rutas/${route.slug}/convocar`);
   const parsed = parseOutingForm(form);
   if ("error" in parsed) return { error: parsed.error };
+  if (!(await acceptRulesIfChecked(supabase, form))) return { error: "No pudimos guardar que aceptaste las reglas. Intenta de nuevo." };
 
   const { data, error } = await supabase
     .from("outings")
@@ -66,6 +77,7 @@ export async function createOuting(route: Target, _prev: ActionState, form: Form
     .select("id")
     .single();
   if (error) {
+    if (error.code === "23514") return { error: error.message };
     console.error("createOuting:", error.message);
     return { error: "No pudimos publicar la salida. Intenta de nuevo." };
   }
@@ -114,10 +126,11 @@ export async function cancelOuting(outing: Target): Promise<ActionState> {
   return { error: null };
 }
 
-export async function joinOuting(outing: Target): Promise<ActionState> {
+export async function joinOuting(outing: Target, _prev: ActionState, form: FormData): Promise<ActionState> {
   const { supabase, user } = await requireUser(`/salidas/${outing.id}`);
+  if (!(await acceptRulesIfChecked(supabase, form))) return { error: "No pudimos guardar que aceptaste las reglas. Intenta de nuevo." };
   const { error } = await supabase.from("outing_members").insert({ outing_id: outing.id, user_id: user.id });
-  // 23505: ya estaba inscrito. 23514: el trigger de cupo (llena o cerrada) con su mensaje en español
+  // 23505: ya estaba inscrito. 23514: el trigger de cupo (llena, cerrada o sin aceptar las reglas) con su mensaje en español
   if (error && error.code !== "23505") {
     if (error.code === "23514") return { error: error.message };
     console.error("joinOuting:", error.message);

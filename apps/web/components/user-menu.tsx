@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useEffect, useId, useRef, useState } from "react";
-import { CalendarCheck, ChevronDown, ClipboardCheck, FilePlus2, LogOut, Route } from "lucide-react";
+import { CalendarCheck, ChevronDown, ClipboardCheck, FilePlus2, HeartHandshake, LogOut, Route } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import { useSessionUser } from "@/lib/use-session-user";
 
@@ -108,6 +108,10 @@ export function UserMenu() {
                   {pending > 0 && <span className="rounded-full bg-secondary px-1.5 text-[10px] font-bold text-on-secondary">{pending}</span>}
                 </Link>
               )}
+              <Link href="/reglas" className={ITEM}>
+                <HeartHandshake className="size-4 text-primary" aria-hidden />
+                Reglas de la comunidad
+              </Link>
             </nav>
             <form action="/auth/salir" method="post" className="mt-1 border-t border-outline-variant/50 pt-1">
               <button className={`${ITEM} w-full text-on-surface-variant`}>

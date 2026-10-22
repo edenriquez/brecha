@@ -1,15 +1,20 @@
+import { Suspense } from "react";
 import type { Metadata } from "next";
+import { headers } from "next/headers";
 import Image from "next/image";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import clsx from "clsx";
-import { ArrowLeft, Ban, CalendarDays, Clock, Gauge, MapPin, Mountain, Navigation, NotebookText, PencilLine, Ruler, TrendingUp, Users } from "lucide-react";
+import { ArrowLeft, Ban, CalendarDays, CalendarPlus, Clock, Gauge, MapPin, Mountain, Navigation, NotebookText, PencilLine, Ruler, TrendingUp, Users } from "lucide-react";
 import { Avatar } from "@/components/avatar";
 import { CancelOutingButton } from "@/components/cancel-outing-button";
 import { MembershipButton } from "@/components/membership-button";
+import { OutingWeather, OutingWeatherSkeleton } from "@/components/outing-weather";
 import { ShareButton } from "@/components/share-button";
 import { TopNav } from "@/components/top-nav";
 import { WhatsAppButton } from "@/components/whatsapp-button";
+import { hasAcceptedRules } from "@/lib/auth.server";
+import { googleCalendarUrl, outingEvent } from "@/lib/calendar";
 import { createClient } from "@/lib/supabase/server";
 import { DIFFICULTY, formatDuration, formatKm, googleMapsSearch } from "@/lib/routes";
 import { LEVEL, outingDateParts, PACE, spotsLabel } from "@/lib/outings";
@@ -43,6 +48,13 @@ export default async function OutingPage({ params }: Props) {
   const isOrganizer = user?.id === outing.organizer.id;
   const full = outing.members >= outing.capacity;
   const target = { id: outing.id, slug: route.slug };
+  const askRules = !!user && !joined && !closed && !full && !(await hasAcceptedRules(supabase, user.id));
+  let googleCalendar: string | null = null;
+  if (joined && !closed) {
+    const h = await headers();
+    const url = `${h.get("x-forwarded-proto") ?? "http"}://${h.get("host")}/salidas/${outing.id}`;
+    googleCalendar = googleCalendarUrl(outingEvent(outing, url));
+  }
   const invite = `${outing.title}: ${date.long}, ${date.time} en ${route.name}. ${spotsLabel(outing.capacity, outing.members)}. ¿Te unes?`;
 
   return (
@@ -141,6 +153,12 @@ export default async function OutingPage({ params }: Props) {
               </div>
             </section>
 
+            {!closed && (
+              <Suspense fallback={<OutingWeatherSkeleton />}>
+                <OutingWeather routeId={route.id} startsAt={outing.starts_at} durationMin={route.duration_min} />
+              </Suspense>
+            )}
+
             {outing.notes && (
               <section className="rounded-2xl border border-outline-variant/70 bg-surface-container-lowest p-6 shadow-xs">
                 <h2 className="mb-3 flex items-center gap-2 font-headline text-lg font-bold">
@@ -223,7 +241,7 @@ export default async function OutingPage({ params }: Props) {
                   <CancelOutingButton outing={target} others={outing.members - 1} />
                 </div>
               ) : user ? (
-                <MembershipButton outing={target} joined={joined} full={full} />
+                <MembershipButton outing={target} joined={joined} full={full} askRules={askRules} />
               ) : (
                 <Link
                   href={`/entrar?next=/salidas/${outing.id}`}
@@ -233,6 +251,7 @@ export default async function OutingPage({ params }: Props) {
                 </Link>
               )}
               {joined && !isOrganizer && !closed && <p className="mt-2 text-center text-xs font-semibold text-primary">Ya estás en la lista. ¡Nos vemos en el sendero!</p>}
+              {googleCalendar && <AddToCalendar google={googleCalendar} ics={`/salidas/${outing.id}/calendario.ics`} />}
               {!isOrganizer && !closed && (
                 <div className="mt-3">
                   <WhatsAppButton message={invite} label="Invitar a alguien por WhatsApp" />
@@ -242,6 +261,26 @@ export default async function OutingPage({ params }: Props) {
           </aside>
         </div>
       </main>
+    </div>
+  );
+}
+
+function AddToCalendar({ google, ics }: { google: string; ics: string }) {
+  const link = "flex flex-1 items-center justify-center gap-1.5 rounded-lg border border-outline-variant px-3 py-2 text-xs font-semibold hover:bg-surface-container";
+  return (
+    <div className="mt-3 space-y-1.5">
+      <p className="flex items-center gap-1.5 text-xs font-semibold text-on-surface-variant">
+        <CalendarPlus className="size-4" aria-hidden />
+        Agregar a tu calendario
+      </p>
+      <div className="flex gap-2">
+        <a href={google} target="_blank" rel="noopener noreferrer" className={link}>
+          Google Calendar
+        </a>
+        <a href={ics} download className={link}>
+          Apple / Outlook (.ics)
+        </a>
+      </div>
     </div>
   );
 }
