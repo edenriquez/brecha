@@ -71,6 +71,27 @@ export function matchesFilters(route: RouteSummary, params: URLSearchParams) {
   });
 }
 
+/** Zona del mapa elegida con "Buscar en esta zona": oeste, sur, este, norte. */
+export type Area = [number, number, number, number];
+export const AREA_KEY = "zona";
+
+export function parseArea(value: string | null): Area | null {
+  const parts = value?.split(",").map(Number);
+  if (!parts || parts.length !== 4 || parts.some((n) => !Number.isFinite(n))) return null;
+  const [west, south, east, north] = parts;
+  if (west >= east || south >= north || south < -90 || north > 90) return null;
+  return [west, south, east, north];
+}
+
+/** 4 decimales (~10 m) bastan y la URL queda corta. */
+export function formatArea(area: Area) {
+  return area.map((n) => n.toFixed(4)).join(",");
+}
+
+export function inArea(route: Pick<RouteSummary, "lat" | "lng">, [west, south, east, north]: Area) {
+  return route.lng >= west && route.lng <= east && route.lat >= south && route.lat <= north;
+}
+
 /** Filtros del panel "Más filtros" activos (la dificultad y el texto tienen su propio control). */
 export function countPanelFilters(params: URLSearchParams) {
   return [...RANGE_KEYS, TYPE_KEY].filter((key) => params.get(key)).length;

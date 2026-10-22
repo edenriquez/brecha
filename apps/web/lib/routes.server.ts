@@ -2,6 +2,8 @@ import "server-only";
 import { cache } from "react";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { LineString } from "geojson";
+import { RECENT_REPORT_DAYS, shiftDay, type RoutePhoto, type TrailReport } from "@/lib/community";
+import { todayInMexicoCity } from "@/lib/outings";
 import { createAnonClient } from "@/lib/supabase/server";
 import { ROUTE_FIELDS_COLUMNS, toRouteFields, type RouteDetail, type RouteFields, type RouteShape, type RouteStatus, type RouteSummary } from "@/lib/routes";
 
@@ -47,6 +49,35 @@ export async function getOwnRoute(supabase: SupabaseClient, slug: string): Promi
   if (!data) return null;
   const row = data as unknown as Omit<OwnRoute, "fields"> & Parameters<typeof toRouteFields>[0];
   return { id: row.id, slug: row.slug, distance_km: row.distance_km, elevation_gain_m: row.elevation_gain_m, status: row.status, created_by: row.created_by, review_note: row.review_note, fields: toRouteFields(row) };
+}
+
+const AUTHOR = "id, display_name, avatar_url";
+
+/** Fotos de la comunidad y reportes recientes del sendero, del más nuevo al más viejo. */
+export async function getRouteCommunity(routeId: string): Promise<{ photos: RoutePhoto[]; reports: TrailReport[] }> {
+  const supabase = createAnonClient();
+  const [photos, reports] = await Promise.all([
+    supabase
+      .from("route_photos")
+      .select(`id, path, caption, width, height, created_at, author:profiles!route_photos_user_id_fkey(${AUTHOR})`)
+      .eq("route_id", routeId)
+      .order("created_at", { ascending: false })
+      .limit(60),
+    supabase
+      .from("trail_reports")
+      .select(`id, visited_on, status, issues, note, author:profiles!trail_reports_user_id_fkey(${AUTHOR})`)
+      .eq("route_id", routeId)
+      .gte("visited_on", shiftDay(todayInMexicoCity(), -RECENT_REPORT_DAYS))
+      .order("visited_on", { ascending: false })
+      .order("created_at", { ascending: false })
+      .limit(10),
+  ]);
+  if (photos.error) throw new Error(`route_photos ${routeId}: ${photos.error.message}`);
+  if (reports.error) throw new Error(`trail_reports ${routeId}: ${reports.error.message}`);
+  return {
+    photos: (photos.data as unknown as Omit<RoutePhoto, "url">[]).map((p) => ({ ...p, url: supabase.storage.from("route-photos").getPublicUrl(p.path).data.publicUrl })),
+    reports: reports.data as unknown as TrailReport[],
+  };
 }
 
 /** Trazo, perfil y enlace de descarga del GPX; null si la ruta no tiene trazo. */

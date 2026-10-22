@@ -20,3 +20,17 @@ export function useSessionUser() {
 
   return user;
 }
+
+/** Si quien tiene la sesión modera; false mientras se averigua o sin sesión. */
+export function useIsAdmin(user: User | null | undefined) {
+  const [admin, setAdmin] = useState(false);
+
+  useEffect(() => {
+    if (!user) return;
+    createClient()
+      .rpc("is_admin")
+      .then(({ data }) => setAdmin(data === true));
+  }, [user]);
+
+  return !!user && admin;
+}
