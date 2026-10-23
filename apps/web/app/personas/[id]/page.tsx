@@ -6,6 +6,7 @@ import { CalendarDays, Camera, Footprints, MapPin, Megaphone, Route, Signpost } 
 import { Avatar } from "@/components/avatar";
 import { OutingCard } from "@/components/outing-card";
 import { OwnProfileLink } from "@/components/own-profile-link";
+import { ReportButton } from "@/components/report-button";
 import { RouteCard } from "@/components/route-card";
 import { ShareButton } from "@/components/share-button";
 import { TopNav } from "@/components/top-nav";
@@ -63,9 +64,10 @@ export default async function ProfilePage({ params }: Props) {
               </p>
               {profile.bio && <p className="max-w-2xl pt-1 text-sm leading-relaxed whitespace-pre-line text-on-surface">{profile.bio}</p>}
             </div>
-            <div className="flex gap-2 self-start">
+            <div className="flex items-center gap-3 self-start">
               <OwnProfileLink profileId={profile.id} />
               <ShareButton title={name} />
+              <ReportButton target={{ type: "perfil", id: profile.id }} ownerId={profile.id} />
             </div>
           </div>
 

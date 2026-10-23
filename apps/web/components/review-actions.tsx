@@ -1,6 +1,7 @@
 "use client";
 
 import { useActionState } from "react";
+import { keepValues } from "@/lib/forms";
 import { CheckCircle2, Loader2, XCircle } from "lucide-react";
 import { approveRoute, rejectRoute, type ReviewState } from "@/app/revision/actions";
 import type { RouteStatus } from "@/lib/routes";
@@ -25,7 +26,7 @@ export function ReviewActions({ route, status }: { route: { id: string; slug: st
         </form>
       )}
       {status !== "rechazada" && (
-        <form action={reject} className="space-y-2 border-t border-outline-variant/50 pt-4">
+        <form onSubmit={keepValues(reject)} className="space-y-2 border-t border-outline-variant/50 pt-4">
           <label htmlFor="note" className="block font-headline text-sm font-bold">
             {status === "publicada" ? "Quitar del mapa" : "No publicar"}
           </label>

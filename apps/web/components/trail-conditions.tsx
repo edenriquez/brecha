@@ -1,10 +1,12 @@
 "use client";
 
 import { useActionState, useState, useTransition } from "react";
+import { keepValues } from "@/lib/forms";
 import Link from "next/link";
 import clsx from "clsx";
 import { Send, Signpost, Trash2 } from "lucide-react";
 import { Avatar } from "@/components/avatar";
+import { ReportButton } from "@/components/report-button";
 import { deleteTrailReport, reportTrailConditions, type CommunityState } from "@/app/rutas/community-actions";
 import { daysAgoLabel, RECENT_REPORT_DAYS, REPORT_WINDOW_DAYS, shiftDay, TRAIL_ISSUES, TRAIL_STATUS, type TrailIssue, type TrailReport, type TrailStatus } from "@/lib/community";
 import { todayInMexicoCity } from "@/lib/outings";
@@ -121,12 +123,15 @@ function ReportBody({ report, slug, canDelete }: { report: TrailReport; slug: st
           <Avatar person={report.author} size={20} className="border-0" />
           {personName(report.author)}
         </Link>
-        {canDelete && (
-          <button type="button" onClick={remove} disabled={pending} className="ml-auto flex items-center gap-1 font-semibold hover:text-error disabled:opacity-50">
-            <Trash2 className="size-3.5" aria-hidden />
-            {pending ? "Borrando…" : "Borrar"}
-          </button>
-        )}
+        <span className="ml-auto flex items-center gap-3">
+          <ReportButton target={{ type: "reporte", id: report.id }} ownerId={report.author.id} className="text-[11px]" />
+          {canDelete && (
+            <button type="button" onClick={remove} disabled={pending} className="flex items-center gap-1 font-semibold hover:text-error disabled:opacity-50">
+              <Trash2 className="size-3.5" aria-hidden />
+              {pending ? "Borrando…" : "Borrar"}
+            </button>
+          )}
+        </span>
       </div>
       {error && <p className="text-xs font-semibold text-error">{error}</p>}
     </div>
@@ -143,7 +148,7 @@ function ReportForm({ route, onClose }: { route: Target; onClose: (sent: boolean
   }, { error: null, done: false });
 
   return (
-    <form action={send} className="space-y-4 rounded-xl border border-outline-variant/60 p-4">
+    <form onSubmit={keepValues(send)} className="space-y-4 rounded-xl border border-outline-variant/60 p-4">
       <fieldset>
         <legend className="mb-2 font-headline text-sm font-bold">¿Cómo estaba?</legend>
         <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">

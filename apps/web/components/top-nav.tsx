@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { FilePlus2, Mountain } from "lucide-react";
 import { SearchBox } from "@/components/search-box";
+import { SuspensionNotice } from "@/components/suspension-notice";
 import { UserMenu } from "@/components/user-menu";
 
 /** `search`: el explorador pasa su buscador en vivo; en las demás páginas buscar lleva al mapa. */
@@ -28,6 +29,7 @@ export function TopNav({ search }: { search?: React.ReactNode }) {
           <UserMenu />
         </div>
       </div>
+      <SuspensionNotice />
     </header>
   );
 }

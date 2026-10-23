@@ -60,3 +60,43 @@ export async function updateProfile(_prev: ProfileState, form: FormData): Promis
   revalidatePath(profileHref(user.id));
   redirect(profileHref(user.id));
 }
+
+export type EmergencyState = { error: string | null; saved: boolean };
+
+const PHONE = /^\+?[0-9][0-9 ()-]{6,18}[0-9]$/;
+
+export async function saveEmergencyContact(_prev: EmergencyState, form: FormData): Promise<EmergencyState> {
+  const { supabase, user } = await requireUser("/perfil");
+  const name = String(form.get("name") ?? "")
+    .replace(/\s+/g, " ")
+    .trim();
+  const phone = String(form.get("phone") ?? "")
+    .replace(/\s+/g, " ")
+    .trim();
+  const relationship = String(form.get("relationship") ?? "").trim();
+
+  if (name.length < 2 || name.length > 60) return { error: "Escribe el nombre de tu contacto (2 a 60 caracteres).", saved: false };
+  if (!PHONE.test(phone)) return { error: "Escribe un teléfono de 8 a 20 dígitos; puede empezar con +52.", saved: false };
+  if (relationship.length > 30) return { error: "El parentesco no puede pasar de 30 caracteres.", saved: false };
+
+  const contact = { name, phone, relationship: relationship || null };
+  const updated = await supabase.from("emergency_contacts").update(contact).eq("user_id", user.id).select("user_id");
+  const { error } = updated.error || updated.data?.length ? updated : await supabase.from("emergency_contacts").insert(contact);
+  if (error) {
+    console.error("saveEmergencyContact:", error.message);
+    return { error: "No pudimos guardar tu contacto. Intenta de nuevo.", saved: false };
+  }
+  revalidatePath("/perfil");
+  return { error: null, saved: true };
+}
+
+export async function deleteEmergencyContact(): Promise<EmergencyState> {
+  const { supabase, user } = await requireUser("/perfil");
+  const { error } = await supabase.from("emergency_contacts").delete().eq("user_id", user.id);
+  if (error) {
+    console.error("deleteEmergencyContact:", error.message);
+    return { error: "No pudimos borrar tu contacto. Intenta de nuevo.", saved: false };
+  }
+  revalidatePath("/perfil");
+  return { error: null, saved: false };
+}
