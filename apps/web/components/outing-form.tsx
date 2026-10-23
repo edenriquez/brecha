@@ -1,6 +1,7 @@
 "use client";
 
 import { useActionState, useState } from "react";
+import { keepValues } from "@/lib/forms";
 import Image from "next/image";
 import clsx from "clsx";
 import { CheckCircle2, Mountain, Send } from "lucide-react";
@@ -66,7 +67,7 @@ export function OutingForm({
 
   return (
     <div className="grid grid-cols-1 items-start gap-8 lg:grid-cols-12">
-      <form action={formAction} className="space-y-6 lg:col-span-7">
+      <form onSubmit={keepValues(formAction)} className="space-y-6 lg:col-span-7">
         <section className="space-y-6 rounded-xl border border-outline-variant bg-surface-container-lowest p-6 shadow-sm sm:p-7">
           <div>
             <span className={label}>Ruta</span>

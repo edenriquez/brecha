@@ -1,17 +1,23 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { ArrowLeft, UserRound } from "lucide-react";
+import { EmergencyContactForm } from "@/components/emergency-contact-form";
 import { ProfileForm } from "@/components/profile-form";
 import { TopNav } from "@/components/top-nav";
 import { requireUser } from "@/lib/auth.server";
+import type { EmergencyContact } from "@/lib/moderation";
 import { PERSON_COLUMNS, profileHref, type Profile } from "@/lib/profiles";
 
 export const metadata: Metadata = { title: "Editar perfil" };
 
 export default async function EditProfilePage() {
   const { supabase, user } = await requireUser("/perfil");
-  const { data, error } = await supabase.from("profiles").select(`${PERSON_COLUMNS}, bio, home_area, created_at`).eq("id", user.id).single();
-  if (error) throw new Error(`perfil: ${error.message}`);
+  const [profile, contact] = await Promise.all([
+    supabase.from("profiles").select(`${PERSON_COLUMNS}, bio, home_area, created_at`).eq("id", user.id).single(),
+    supabase.from("emergency_contacts").select("name, phone, relationship").eq("user_id", user.id).maybeSingle(),
+  ]);
+  if (profile.error) throw new Error(`perfil: ${profile.error.message}`);
+  if (contact.error) throw new Error(`contacto de emergencia: ${contact.error.message}`);
 
   return (
     <div className="flex min-h-screen flex-col bg-surface-container-low">
@@ -29,7 +35,10 @@ export default async function EditProfilePage() {
           <h1 className="font-headline text-3xl font-extrabold tracking-tight sm:text-4xl">Editar perfil</h1>
           <p className="mt-1.5 text-on-surface-variant">Así te ven quienes caminan contigo. Tu correo nunca se muestra.</p>
         </div>
-        <ProfileForm profile={data as Profile} />
+        <div className="space-y-6">
+          <ProfileForm profile={profile.data as Profile} />
+          <EmergencyContactForm contact={contact.data as EmergencyContact | null} />
+        </div>
       </main>
     </div>
   );

@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useEffect, useId, useRef, useState } from "react";
-import { CalendarCheck, ChevronDown, ClipboardCheck, FilePlus2, Heart, HeartHandshake, LogOut, Route, UserRound } from "lucide-react";
+import { CalendarCheck, ChevronDown, ClipboardCheck, FilePlus2, Heart, HeartHandshake, LogOut, Route, ShieldCheck, UserRound } from "lucide-react";
 import { Avatar } from "@/components/avatar";
 import type { Person } from "@/lib/outings";
 import { PERSON_COLUMNS, profileHref } from "@/lib/profiles";
@@ -14,8 +14,8 @@ const ITEM = "flex items-center gap-2.5 rounded-lg px-3 py-2 text-sm font-medium
 export function UserMenu() {
   const user = useSessionUser();
   const [open, setOpen] = useState(false);
-  // rutas en revisión si es moderación; null si no lo es
-  const [pending, setPending] = useState<number | null>(null);
+  // pendientes de moderación; null si no es moderación
+  const [pending, setPending] = useState<{ routes: number; reports: number } | null>(null);
   const [profile, setProfile] = useState<Person | null>(null);
   const menu = useRef<HTMLDivElement>(null);
   const menuId = useId();
@@ -31,8 +31,12 @@ export function UserMenu() {
       .then(({ data }) => setProfile(data as Person | null));
     supabase.rpc("is_admin").then(async ({ data }) => {
       if (data !== true) return;
-      const { count } = await supabase.from("routes").select("id", { count: "exact", head: true }).eq("status", "revision");
-      setPending(count ?? 0);
+      const head = { count: "exact", head: true } as const;
+      const [routes, reports] = await Promise.all([
+        supabase.from("routes").select("id", head).eq("status", "revision"),
+        supabase.from("content_reports").select("id", head).eq("status", "abierto"),
+      ]);
+      setPending({ routes: routes.count ?? 0, reports: reports.count ?? 0 });
     });
   }, [user]);
 
@@ -92,7 +96,7 @@ export function UserMenu() {
           <Avatar person={person} size={36} className="border-0 ring-2 ring-primary-fixed" />
           <span className="hidden text-sm font-medium text-on-surface-variant sm:inline">{name.split(" ")[0]}</span>
           <ChevronDown className="hidden size-4 text-outline sm:block" aria-hidden />
-          {!!pending && <span className="absolute -top-0.5 left-7 size-2.5 rounded-full border-2 border-surface bg-secondary" aria-hidden />}
+          {!!pending && pending.routes + pending.reports > 0 && <span className="absolute -top-0.5 left-7 size-2.5 rounded-full border-2 border-surface bg-secondary" aria-hidden />}
         </button>
         {open && (
           <div id={menuId} className="absolute right-0 z-50 mt-2 w-60 rounded-xl border border-outline-variant/70 bg-surface-container-lowest p-1.5 shadow-lg">
@@ -119,11 +123,18 @@ export function UserMenu() {
                 Subir una ruta
               </Link>
               {pending !== null && (
-                <Link href="/revision" className={ITEM}>
-                  <ClipboardCheck className="size-4 text-primary" aria-hidden />
-                  <span className="flex-1">Revisión</span>
-                  {pending > 0 && <span className="rounded-full bg-secondary px-1.5 text-[10px] font-bold text-on-secondary">{pending}</span>}
-                </Link>
+                <>
+                  <Link href="/admin" className={ITEM}>
+                    <ShieldCheck className="size-4 text-primary" aria-hidden />
+                    <span className="flex-1">Moderación</span>
+                    {pending.reports > 0 && <span className="rounded-full bg-error px-1.5 text-[10px] font-bold text-white">{pending.reports}</span>}
+                  </Link>
+                  <Link href="/revision" className={ITEM}>
+                    <ClipboardCheck className="size-4 text-primary" aria-hidden />
+                    <span className="flex-1">Revisión de rutas</span>
+                    {pending.routes > 0 && <span className="rounded-full bg-secondary px-1.5 text-[10px] font-bold text-on-secondary">{pending.routes}</span>}
+                  </Link>
+                </>
               )}
               <Link href="/reglas" className={ITEM}>
                 <HeartHandshake className="size-4 text-primary" aria-hidden />

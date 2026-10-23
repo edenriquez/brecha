@@ -5,6 +5,7 @@ import Image from "next/image";
 import Link from "next/link";
 import { Camera, ChevronLeft, ChevronRight, ImagePlus, Loader2, Trash2, X } from "lucide-react";
 import { Avatar } from "@/components/avatar";
+import { ReportButton } from "@/components/report-button";
 import { addRoutePhotos, deleteRoutePhoto, type CommunityState } from "@/app/rutas/community-actions";
 import { PHOTOS_PER_UPLOAD, type RoutePhoto } from "@/lib/community";
 import { personName, profileHref } from "@/lib/profiles";
@@ -285,6 +286,7 @@ function Lightbox({
           {index + 1} / {photos.length}
         </span>
         <div className="flex items-center gap-2">
+          <ReportButton key={photo.id} target={{ type: "foto", id: photo.id }} ownerId={photo.author.id} tone="light" />
           {canDelete(photo) && (
             <button type="button" onClick={remove} disabled={pending} className="flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-semibold hover:bg-white/10 disabled:opacity-50">
               <Trash2 className="size-4" aria-hidden />

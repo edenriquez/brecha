@@ -8,8 +8,10 @@ import clsx from "clsx";
 import { ArrowLeft, Ban, CalendarDays, CalendarPlus, Clock, Gauge, MapPin, Mountain, Navigation, NotebookText, PencilLine, Ruler, TrendingUp, Users } from "lucide-react";
 import { Avatar } from "@/components/avatar";
 import { CancelOutingButton } from "@/components/cancel-outing-button";
+import { EmergencyContactHint, EmergencyContacts } from "@/components/emergency-contacts";
 import { MembershipButton } from "@/components/membership-button";
 import { OutingWeather, OutingWeatherSkeleton } from "@/components/outing-weather";
+import { ReportButton } from "@/components/report-button";
 import { ShareButton } from "@/components/share-button";
 import { TopNav } from "@/components/top-nav";
 import { WhatsAppButton } from "@/components/whatsapp-button";
@@ -17,6 +19,7 @@ import { hasAcceptedRules } from "@/lib/auth.server";
 import { googleCalendarUrl, outingEvent } from "@/lib/calendar";
 import { createClient } from "@/lib/supabase/server";
 import { DIFFICULTY, formatDuration, formatKm, googleMapsSearch } from "@/lib/routes";
+import { EMERGENCY_DAYS_AFTER, EMERGENCY_DAYS_BEFORE, type GroupEmergencyContact } from "@/lib/moderation";
 import { LEVEL, outingDateParts, PACE, spotsLabel } from "@/lib/outings";
 import { getOuting } from "@/lib/outings.server";
 import { personName, profileHref } from "@/lib/profiles";
@@ -56,6 +59,8 @@ export default async function OutingPage({ params }: Props) {
     const url = `${h.get("x-forwarded-proto") ?? "http"}://${h.get("host")}/salidas/${outing.id}`;
     googleCalendar = googleCalendarUrl(outingEvent(outing, url));
   }
+  const needsContact = joined && !isOrganizer && !closed && !(await supabase.from("emergency_contacts").select("user_id").eq("user_id", user.id).maybeSingle()).data;
+  const emergency = isOrganizer && outing.status === "abierta" ? await organizerEmergency(supabase, outing) : null;
   const invite = `${outing.title}: ${date.long}, ${date.time} en ${route.name}. ${spotsLabel(outing.capacity, outing.members)}. ¿Te unes?`;
 
   return (
@@ -147,6 +152,8 @@ export default async function OutingPage({ params }: Props) {
               <span className="ml-auto text-xs font-semibold text-primary">Ver perfil</span>
             </Link>
 
+            {emergency && <EmergencyContacts contacts={emergency.contacts} opensOn={emergency.opensOn} />}
+
             <section className="rounded-2xl border border-outline-variant/70 bg-surface-container-lowest p-6 shadow-xs">
               <h2 className="mb-4 flex items-center gap-2 font-headline text-lg font-bold">
                 <Gauge className="size-5 text-primary" aria-hidden />
@@ -197,6 +204,10 @@ export default async function OutingPage({ params }: Props) {
                 Abrir en Google Maps
               </a>
             </section>
+
+            <div className="flex justify-end">
+              <ReportButton target={{ type: "salida", id: outing.id }} ownerId={outing.organizer.id} />
+            </div>
           </div>
 
           <aside className="space-y-4 rounded-2xl border border-outline-variant/80 bg-surface-container-lowest p-5 shadow-sm lg:sticky lg:top-24 lg:col-span-5">
@@ -258,6 +269,7 @@ export default async function OutingPage({ params }: Props) {
                 </Link>
               )}
               {joined && !isOrganizer && !closed && <p className="mt-2 text-center text-xs font-semibold text-primary">Ya estás en la lista. ¡Nos vemos en el sendero!</p>}
+              {needsContact && <EmergencyContactHint />}
               {googleCalendar && <AddToCalendar google={googleCalendar} ics={`/salidas/${outing.id}/calendario.ics`} />}
               {!isOrganizer && !closed && (
                 <div className="mt-3">
@@ -270,6 +282,26 @@ export default async function OutingPage({ params }: Props) {
       </main>
     </div>
   );
+}
+
+const DAY_MS = 86_400_000;
+
+/** Contactos del grupo dentro de la ventana de outing_emergency_contacts(); antes, la fecha desde la que se verán; después, nada. */
+async function organizerEmergency(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  outing: { id: string; starts_at: string },
+): Promise<{ contacts: GroupEmergencyContact[] | null; opensOn: string | null } | null> {
+  const start = Date.parse(outing.starts_at);
+  const now = Date.now();
+  if (now > start + EMERGENCY_DAYS_AFTER * DAY_MS) return null;
+  const opens = start - EMERGENCY_DAYS_BEFORE * DAY_MS;
+  if (now < opens) {
+    const parts = outingDateParts(new Date(opens).toISOString());
+    return { contacts: null, opensOn: `${parts.long} a las ${parts.time}` };
+  }
+  const { data, error } = await supabase.rpc("outing_emergency_contacts", { p_outing: outing.id });
+  if (error) throw new Error(`contactos de emergencia ${outing.id}: ${error.message}`);
+  return { contacts: data as GroupEmergencyContact[], opensOn: null };
 }
 
 function AddToCalendar({ google, ics }: { google: string; ics: string }) {

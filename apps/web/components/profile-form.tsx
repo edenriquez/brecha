@@ -1,6 +1,7 @@
 "use client";
 
 import { useActionState, useRef, useState } from "react";
+import { keepValues } from "@/lib/forms";
 import { ImagePlus, Loader2, Save, Trash2 } from "lucide-react";
 import { Avatar } from "@/components/avatar";
 import { updateProfile, type ProfileState } from "@/app/perfil/actions";
@@ -63,7 +64,7 @@ export function ProfileForm({ profile }: { profile: Profile }) {
   }
 
   return (
-    <form action={save} className="space-y-6 rounded-2xl border border-outline-variant/70 bg-surface-container-lowest p-6 shadow-xs sm:p-8">
+    <form onSubmit={keepValues(save)} className="space-y-6 rounded-2xl border border-outline-variant/70 bg-surface-container-lowest p-6 shadow-xs sm:p-8">
       <input type="hidden" name="avatar" value={avatar.kind === "new" ? avatar.path : avatar.kind} />
 
       <div className="flex items-center gap-5">

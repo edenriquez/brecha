@@ -1,6 +1,7 @@
 "use client";
 
 import { useActionState, useState } from "react";
+import { keepValues } from "@/lib/forms";
 import Link from "next/link";
 import { CheckCircle2, MessageSquareText, PencilLine, Send } from "lucide-react";
 import { suggestCorrection, type SuggestionState } from "@/app/rutas/actions";
@@ -61,7 +62,7 @@ export function RouteFeedback({ route }: { route: { id: string; slug: string; cr
       }
     >
       {open && (
-        <form action={send} className="space-y-2">
+        <form onSubmit={keepValues(send)} className="space-y-2">
           <label htmlFor="suggestion" className="sr-only">
             Qué cambió
           </label>
