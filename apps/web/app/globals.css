@@ -60,3 +60,8 @@ body {
 .maplibregl-marker {
   cursor: pointer;
 }
+
+/* la ficha de un punto debe quedar sobre los controles flotantes del mapa (z-10) */
+.maplibregl-popup {
+  z-index: 20;
+}

@@ -1,7 +1,8 @@
 "use client";
 
 import { useEffect, useRef } from "react";
-import { addHillshade, collapseAttribution, lineBounds, MAP_STYLE, maplibregl, setTrack, type LineCoords } from "@/lib/maplibre";
+import { addHillshade, collapseAttribution, lineBounds, MAP_STYLE, maplibregl, setSatellite, setTerrain3d, setTrack, TERRAIN_3D_PITCH, type LineCoords } from "@/lib/maplibre";
+import { OFFLINE_ZOOM, offlineBounds } from "@/lib/offline";
 
 const LABEL = "flex items-center gap-2 rounded-full border border-outline-variant/80 bg-surface-container-lowest/95 px-2.5 py-1.5 shadow-md";
 
@@ -12,10 +13,16 @@ function labelMarker(text: string, dot: string) {
   return el;
 }
 
-/** Mapa con el trazo de la ruta; `hover` es el punto que se señala desde el perfil de altitud. */
-export function TrackMap({ line, hover }: { line: LineCoords; hover: [number, number] | null }) {
+/**
+ * Mapa con el trazo de la ruta; `hover` es el punto que se señala desde el perfil de altitud.
+ * `offline`: visor a pantalla completa de una ruta descargada, en satélite, con GPS y sin salir de la zona guardada.
+ */
+export function TrackMap({ line, hover, offline = false, terrain3d = false }: { line: LineCoords; hover: [number, number] | null; offline?: boolean; terrain3d?: boolean }) {
   const container = useRef<HTMLDivElement>(null);
+  const mapRef = useRef<maplibregl.Map | null>(null);
+  const styleLoaded = useRef(false);
   const hoverMarker = useRef<maplibregl.Marker | null>(null);
+  const terrain3dRef = useRef(terrain3d);
 
   useEffect(() => {
     if (!container.current || line.length < 2) return;
@@ -24,14 +31,22 @@ export function TrackMap({ line, hover }: { line: LineCoords; hover: [number, nu
       style: MAP_STYLE,
       bounds: lineBounds(line),
       fitBoundsOptions: { padding: 48 },
-      cooperativeGestures: true,
+      cooperativeGestures: !offline,
       attributionControl: { compact: true },
+      ...(offline && { maxBounds: offlineBounds(line), minZoom: OFFLINE_ZOOM.min, maxZoom: OFFLINE_ZOOM.max }),
     });
-    map.addControl(new maplibregl.NavigationControl({ showCompass: false }), "bottom-right");
+    map.addControl(new maplibregl.NavigationControl({ showCompass: offline }), "bottom-right");
+    if (offline) {
+      map.addControl(new maplibregl.GeolocateControl({ positionOptions: { enableHighAccuracy: true }, trackUserLocation: true, fitBoundsOptions: { maxZoom: 15 } }), "bottom-right");
+    }
     map.once("load", () => {
       addHillshade(map);
       setTrack(map, line);
+      if (offline) setSatellite(map, true);
+      setTerrain3d(map, terrain3dRef.current);
+      if (terrain3dRef.current) map.easeTo({ pitch: TERRAIN_3D_PITCH, duration: 1000 });
       collapseAttribution(map);
+      styleLoaded.current = true;
     });
 
     const start = line[0];
@@ -44,12 +59,23 @@ export function TrackMap({ line, hover }: { line: LineCoords; hover: [number, nu
     dot.className = "size-4 rounded-full border-[3px] border-white bg-secondary shadow-md";
     dot.style.display = "none";
     hoverMarker.current = new maplibregl.Marker({ element: dot }).setLngLat(start).addTo(map);
+    mapRef.current = map;
 
     return () => {
       hoverMarker.current = null;
+      mapRef.current = null;
+      styleLoaded.current = false;
       map.remove();
     };
-  }, [line]);
+  }, [line, offline]);
+
+  useEffect(() => {
+    terrain3dRef.current = terrain3d;
+    const map = mapRef.current;
+    if (!map || !styleLoaded.current) return;
+    setTerrain3d(map, terrain3d);
+    map.easeTo(terrain3d ? { pitch: TERRAIN_3D_PITCH, duration: 1000 } : { pitch: 0, bearing: 0, duration: 700 });
+  }, [terrain3d]);
 
   useEffect(() => {
     const marker = hoverMarker.current;
