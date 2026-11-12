@@ -2,7 +2,7 @@ import Image from "next/image";
 import Link from "next/link";
 import clsx from "clsx";
 import { CalendarDays, MapPin, Mountain, Navigation } from "lucide-react";
-import { DIFFICULTY, formatKm } from "@/lib/routes";
+import { DIFFICULTY, formatKm, selectInstead } from "@/lib/routes";
 import { outingDateParts, spotsLabel, type OutingCardData } from "@/lib/outings";
 
 export function OutingCard({
@@ -15,7 +15,8 @@ export function OutingCard({
 }: {
   outing: OutingCardData;
   selected?: boolean;
-  onSelect?: () => void;
+  /** Devuelve true si usó el clic (enfocar en el mapa); si no, el enlace abre la salida */
+  onSelect?: () => boolean;
   /** Vista previa del formulario: sin enlace y sin hover */
   preview?: boolean;
   /** Etiqueta en la esquina de la foto, p. ej. "Organizas" o "Cancelada" */
@@ -94,7 +95,7 @@ export function OutingCard({
 
   if (preview) return <article className={className}>{body}</article>;
   return (
-    <Link href={`/salidas/${outing.id}`} onMouseEnter={onSelect} onFocus={onSelect} className={className}>
+    <Link href={`/salidas/${outing.id}`} onClick={onSelect && ((e) => selectInstead(e, onSelect))} className={className}>
       {body}
     </Link>
   );

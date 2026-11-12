@@ -21,7 +21,6 @@ import {
   Navigation,
   Route,
   Search,
-  SlidersHorizontal,
   X,
 } from "lucide-react";
 import { OutingCard } from "@/components/outing-card";
@@ -40,12 +39,11 @@ import {
   parseArea,
   QUERY_KEY,
   RANGE_KEYS,
-  RANGES,
   routeHaystack,
   TYPE_KEY,
   type Area,
 } from "@/lib/route-filters";
-import { DIFFICULTY, formatDuration, formatKm, ROUTE_TYPE, type Difficulty, type RouteSummary } from "@/lib/routes";
+import { DIFFICULTY, formatDuration, formatKm, type Difficulty, type RouteSummary } from "@/lib/routes";
 import type { ProfilePoint } from "@/lib/gpx";
 import type { LineCoords } from "@/lib/maplibre";
 import type { OutingCardData } from "@/lib/outings";
@@ -53,6 +51,8 @@ import { createClient } from "@/lib/supabase/client";
 import { useUrlParams } from "@/lib/use-url-params";
 
 const DIFFICULTIES: Difficulty[] = ["facil", "moderada", "dificil"];
+/** El breakpoint `lg` de Tailwind: desde ahí la lista y el mapa se ven lado a lado. */
+const SIDE_BY_SIDE = "(min-width: 1024px)";
 const CLEARED = Object.fromEntries([QUERY_KEY, DIFFICULTY_KEY, TYPE_KEY, AREA_KEY, ...RANGE_KEYS].map((k) => [k, null]));
 
 export function Explorer({ routes, outings }: { routes: RouteSummary[]; outings: OutingCardData[] }) {
@@ -60,15 +60,14 @@ export function Explorer({ routes, outings }: { routes: RouteSummary[]; outings:
   const query = params.get(QUERY_KEY) ?? "";
   const difficulty = params.get(DIFFICULTY_KEY);
   const tab = params.get("ver") === "salidas" ? "salidas" : "rutas";
-  const panelCount = countPanelFilters(params);
   const areaParam = params.get(AREA_KEY);
   const area = useMemo(() => parseArea(areaParam), [areaParam]);
-  const filtering = Boolean(query.trim() || difficulty || panelCount || area);
+  // rangos y tipo no tienen controles aquí, pero un enlace puede traerlos
+  const filtering = Boolean(query.trim() || difficulty || countPanelFilters(params) || area);
   // lo que se ve tras mover el mapa a mano; con él aparece "Buscar en esta zona"
   const [moved, setMoved] = useState<Area | null>(null);
   const canSearchArea = moved !== null && (!area || formatArea(moved) !== formatArea(area));
 
-  const [panelOpen, setPanelOpen] = useState(false);
   const [view, setView] = useState<"lista" | "mapa">("lista");
   // en ambas pestañas la selección es una ruta: es lo que tiene pin en el mapa
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -122,6 +121,14 @@ export function Explorer({ routes, outings }: { routes: RouteSummary[]; outings:
     if (route) router.push(`/rutas/${route.slug}`);
   }
 
+  // igual desde las tarjetas: el primer clic enfoca la ruta en el mapa y el segundo la abre.
+  // En móvil la lista tapa el mapa, así que ahí la tarjeta abre directo.
+  function focusOnMap(id: string) {
+    if (id === selectedId || !window.matchMedia(SIDE_BY_SIDE).matches) return false;
+    setSelectedId(id);
+    return true;
+  }
+
   function toggle(key: string, value: string) {
     setParams({ [key]: params.get(key) === value ? null : value });
   }
@@ -132,22 +139,22 @@ export function Explorer({ routes, outings }: { routes: RouteSummary[]; outings:
       <main className="relative flex flex-1 overflow-hidden">
         <section
           className={clsx(
-            "h-full w-full overflow-y-auto bg-surface-container-low px-4 py-5 sm:px-8 lg:block lg:w-[58%]",
+            "@container h-full w-full overflow-y-auto bg-surface-container-low px-4 py-4 sm:px-6 lg:block lg:w-[560px] lg:shrink-0 lg:px-4 xl:w-[620px]",
             view === "mapa" && "hidden",
           )}
         >
-          <p className="mb-4 inline-flex items-center gap-1.5 text-sm font-semibold text-primary-container">
-            <Navigation className="size-4 fill-primary-container" aria-hidden />
+          <p className="mb-3 inline-flex items-center gap-1.5 text-xs font-semibold text-primary-container">
+            <Navigation className="size-3.5 fill-primary-container" aria-hidden />
             Rutas cerca de Ciudad de México
           </p>
 
-          <div className="mb-5 grid grid-cols-3 gap-2 sm:gap-3">
-            <ActivityTile icon={<Footprints className="size-6" />} title="Hiking" subtitle="Senderos y cumbres" active />
-            <ActivityTile icon={<Bike className="size-6" />} title="Bici" subtitle="Gravel y MTB" />
-            <ActivityTile icon={<CarFront className="size-6" />} title="Offroad" subtitle="Rutas 4x4 y brechas" />
+          <div className="mb-3 grid grid-cols-3 gap-2">
+            <ActivityTile icon={<Footprints className="size-5" />} title="Hiking" subtitle="Senderos y cumbres" active />
+            <ActivityTile icon={<Bike className="size-5" />} title="Bici" subtitle="Gravel y MTB" />
+            <ActivityTile icon={<CarFront className="size-5" />} title="Offroad" subtitle="Rutas 4x4 y brechas" />
           </div>
 
-          <div role="tablist" className="mb-4 flex items-center rounded-full border border-outline-variant/50 bg-surface-container p-1">
+          <div role="tablist" className="mb-3 flex items-center rounded-full border border-outline-variant/50 bg-surface-container p-1">
             <Tab active={tab === "rutas"} onClick={() => setParams({ ver: null })}>
               <Route className="size-4" aria-hidden />
               Rutas
@@ -160,28 +167,16 @@ export function Explorer({ routes, outings }: { routes: RouteSummary[]; outings:
           </div>
 
           <div className="no-scrollbar mb-3 flex items-center gap-2 overflow-x-auto py-1">
-            <button
-              type="button"
-              onClick={() => setPanelOpen((o) => !o)}
-              aria-expanded={panelOpen}
-              aria-controls="mas-filtros"
-              className={clsx(
-                "flex shrink-0 items-center gap-1.5 rounded-full border px-3.5 py-1.5 text-xs font-medium transition-colors",
-                panelOpen || panelCount ? "border-primary bg-primary-fixed/40 text-primary" : "border-outline-variant/70 bg-surface-container-lowest hover:border-primary",
-              )}
-            >
-              <SlidersHorizontal className="size-3.5" aria-hidden />
-              Más filtros
-              {panelCount > 0 && <span className="rounded-full bg-primary px-1.5 text-[10px] font-bold text-on-primary">{panelCount}</span>}
-            </button>
             {area && (
-              <Chip active onClick={() => setParams({ [AREA_KEY]: null })}>
-                <MapPinned className="size-3.5" aria-hidden />
-                Zona del mapa
-                <X className="size-3.5" aria-label="Quitar" />
-              </Chip>
+              <>
+                <Chip active onClick={() => setParams({ [AREA_KEY]: null })}>
+                  <MapPinned className="size-3.5" aria-hidden />
+                  Zona del mapa
+                  <X className="size-3.5" aria-label="Quitar" />
+                </Chip>
+                <span className="mx-1 h-5 w-px shrink-0 bg-outline-variant" aria-hidden />
+              </>
             )}
-            <span className="mx-1 h-5 w-px shrink-0 bg-outline-variant" aria-hidden />
             <Chip active={!difficulty} onClick={() => setParams({ [DIFFICULTY_KEY]: null })}>
               Todo
             </Chip>
@@ -193,29 +188,8 @@ export function Explorer({ routes, outings }: { routes: RouteSummary[]; outings:
             ))}
           </div>
 
-          {panelOpen && (
-            <div id="mas-filtros" className="mb-5 grid gap-4 rounded-xl border border-outline-variant/60 bg-surface-container-lowest p-4 shadow-xs sm:grid-cols-2">
-              {RANGE_KEYS.map((key) => (
-                <FilterGroup key={key} label={RANGES[key].label}>
-                  {RANGES[key].options.map((o) => (
-                    <Chip key={o.id} small active={params.get(key) === o.id} onClick={() => toggle(key, o.id)}>
-                      {o.label}
-                    </Chip>
-                  ))}
-                </FilterGroup>
-              ))}
-              <FilterGroup label="Recorrido">
-                {(Object.keys(ROUTE_TYPE) as RouteSummary["route_type"][]).map((t) => (
-                  <Chip key={t} small active={params.get(TYPE_KEY) === t} onClick={() => toggle(TYPE_KEY, t)}>
-                    {ROUTE_TYPE[t]}
-                  </Chip>
-                ))}
-              </FilterGroup>
-            </div>
-          )}
-
-          <div className="mb-4 flex items-baseline justify-between gap-3">
-            <h2 className="font-headline text-base font-bold">
+          <div className="mb-3 flex items-baseline justify-between gap-3">
+            <h2 className="font-headline text-sm font-bold">
               {tab === "rutas" ? routesHeading(visible.length, routes.length, filtering) : outingsHeading(visibleOutings.length, outings.length, filtering)}
             </h2>
             {filtering && (
@@ -226,11 +200,11 @@ export function Explorer({ routes, outings }: { routes: RouteSummary[]; outings:
           </div>
 
           {tab === "rutas" ? (
-            <div className="space-y-6 pb-24 lg:pb-10">
+            <div className="space-y-4 pb-24 lg:pb-6">
               {visible.length ? (
-                <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">
+                <div className="grid grid-cols-2 gap-3 @lg:grid-cols-3">
                   {visible.map((route, i) => (
-                    <RouteCard key={route.id} route={route} priority={i < 3} selected={route.id === selectedId} onSelect={() => setSelectedId(route.id)} />
+                    <RouteCard key={route.id} route={route} compact priority={i < 4} selected={route.id === selectedId} onSelect={() => focusOnMap(route.id)} />
                   ))}
                 </div>
               ) : (
@@ -245,9 +219,9 @@ export function Explorer({ routes, outings }: { routes: RouteSummary[]; outings:
               )}
               <Link
                 href="/rutas/nueva"
-                className="flex items-center gap-3 rounded-xl border border-dashed border-outline-variant bg-surface-container-lowest/60 p-4 transition-colors hover:border-primary-container"
+                className="flex items-center gap-3 rounded-xl border border-dashed border-outline-variant bg-surface-container-lowest/60 p-3 transition-colors hover:border-primary-container"
               >
-                <span className="flex size-10 shrink-0 items-center justify-center rounded-full bg-primary-fixed/60 text-primary">
+                <span className="flex size-9 shrink-0 items-center justify-center rounded-full bg-primary-fixed/60 text-primary">
                   <FilePlus2 className="size-5" aria-hidden />
                 </span>
                 <span className="min-w-0 flex-1">
@@ -258,9 +232,9 @@ export function Explorer({ routes, outings }: { routes: RouteSummary[]; outings:
               </Link>
             </div>
           ) : visibleOutings.length ? (
-            <div className="grid grid-cols-1 gap-4 pb-24 sm:grid-cols-2 lg:pb-10">
+            <div className="grid grid-cols-1 gap-3 pb-24 @xl:grid-cols-2 lg:pb-6">
               {visibleOutings.map((outing) => (
-                <OutingCard key={outing.id} outing={outing} selected={outing.route.id === selectedId} onSelect={() => setSelectedId(outing.route.id)} />
+                <OutingCard key={outing.id} outing={outing} selected={outing.route.id === selectedId} onSelect={() => focusOnMap(outing.route.id)} />
               ))}
             </div>
           ) : (
@@ -284,7 +258,7 @@ export function Explorer({ routes, outings }: { routes: RouteSummary[]; outings:
 
         <section
           className={clsx(
-            "relative h-full w-full overflow-hidden bg-[#e3e8e1] lg:block lg:w-[42%] lg:border-l lg:border-outline-variant/50",
+            "relative h-full w-full overflow-hidden bg-[#e3e8e1] lg:block lg:w-auto lg:flex-1 lg:border-l lg:border-outline-variant/50",
             view === "lista" && "hidden",
           )}
         >
@@ -366,15 +340,14 @@ function MapPeek({ route }: { route: RouteSummary }) {
   );
 }
 
-function Chip({ active, onClick, small, children }: { active: boolean; onClick: () => void; small?: boolean; children: React.ReactNode }) {
+function Chip({ active, onClick, children }: { active: boolean; onClick: () => void; children: React.ReactNode }) {
   return (
     <button
       type="button"
       onClick={onClick}
       aria-pressed={active}
       className={clsx(
-        "flex shrink-0 items-center gap-1.5 rounded-full text-xs transition-colors",
-        small ? "px-3 py-1" : "px-3.5 py-1.5",
+        "flex shrink-0 items-center gap-1.5 rounded-full px-3 py-1 text-xs transition-colors",
         active
           ? "bg-primary font-headline font-semibold text-on-primary shadow-xs"
           : "border border-outline-variant/70 bg-surface-container-lowest font-medium hover:border-primary",
@@ -385,40 +358,31 @@ function Chip({ active, onClick, small, children }: { active: boolean; onClick: 
   );
 }
 
-function FilterGroup({ label, children }: { label: string; children: React.ReactNode }) {
-  return (
-    <fieldset>
-      <legend className="mb-2 text-[11px] font-bold tracking-wider text-on-surface-variant uppercase">{label}</legend>
-      <div className="flex flex-wrap gap-2">{children}</div>
-    </fieldset>
-  );
-}
-
 function ActivityTile({ icon, title, subtitle, active }: { icon: React.ReactNode; title: string; subtitle: string; active?: boolean }) {
   return (
     <div
       aria-disabled={!active}
       className={clsx(
-        "relative rounded-xl p-3",
+        "relative rounded-xl px-2.5 py-2",
         active ? "border-2 border-primary-container bg-surface-container-lowest shadow-xs" : "cursor-not-allowed border border-outline-variant/60 bg-surface-container opacity-75",
       )}
     >
-      <div className={clsx("mb-1.5 flex items-start justify-between", active ? "text-primary-container" : "text-outline")}>
+      <div className={clsx("mb-1 flex items-start justify-between", active ? "text-primary-container" : "text-outline")}>
         {icon}
         {active ? (
-          <CircleCheck className="size-[18px] fill-primary-container text-surface-container-lowest" aria-hidden />
+          <CircleCheck className="size-4 fill-primary-container text-surface-container-lowest" aria-hidden />
         ) : (
-          <span className="hidden rounded bg-surface-container-high px-1.5 py-0.5 text-[10px] font-medium text-on-surface-variant sm:inline">Próximamente</span>
+          <span className="hidden rounded bg-surface-container-high px-1.5 py-0.5 text-[10px] font-medium text-on-surface-variant @lg:inline">Próximamente</span>
         )}
       </div>
-      <p className={clsx("font-headline text-sm", active ? "font-bold text-primary" : "font-semibold text-on-surface-variant")}>{title}</p>
-      <p className={clsx("truncate text-xs", active ? "text-on-surface-variant" : "text-outline")}>
+      <p className={clsx("font-headline text-[13px]", active ? "font-bold text-primary" : "font-semibold text-on-surface-variant")}>{title}</p>
+      <p className={clsx("truncate text-[11px]", active ? "text-on-surface-variant" : "text-outline")}>
         {active ? (
           subtitle
         ) : (
           <>
-            <span className="sm:hidden">Próximamente</span>
-            <span className="hidden sm:inline">{subtitle}</span>
+            <span className="@lg:hidden">Próximamente</span>
+            <span className="hidden @lg:inline">{subtitle}</span>
           </>
         )}
       </p>
