@@ -14,7 +14,7 @@ import { RouteTrack } from "@/components/route-track";
 import { ShareButton } from "@/components/share-button";
 import { TopNav } from "@/components/top-nav";
 import { TrailConditions } from "@/components/trail-conditions";
-import { ACTIVITY_KEY } from "@/lib/route-filters";
+import { ACTIVITY_KEY, mapHref } from "@/lib/route-filters";
 import { ACTIVITY, DIFFICULTY, formatDuration, formatKm, googleMapsDirections, ROUTE_TYPE } from "@/lib/routes";
 import { outingDateParts, spotsLabel, type OutingSummary } from "@/lib/outings";
 import { listUpcomingOutings } from "@/lib/outings.server";
@@ -163,7 +163,7 @@ export default async function RoutePage({ params }: Props) {
               </div>
               {shape ? (
                 <div className="space-y-5">
-                  <RouteTrack line={shape.line} profile={shape.profile} />
+                  <RouteTrack line={shape.line} profile={shape.profile} mapHref={mapHref(route)} />
                   <OfflineDownload
                     route={{
                       slug: route.slug,
@@ -180,7 +180,7 @@ export default async function RoutePage({ params }: Props) {
                 </div>
               ) : (
                 <div className="relative h-80 overflow-hidden rounded-xl border border-outline-variant/60 bg-[#e3e8e1] sm:h-96">
-                  <StartPointMap lat={route.lat} lng={route.lng} />
+                  <StartPointMap lat={route.lat} lng={route.lng} openHref={mapHref(route)} />
                 </div>
               )}
             </div>

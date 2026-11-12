@@ -41,6 +41,7 @@ import {
   parseArea,
   QUERY_KEY,
   RANGE_KEYS,
+  ROUTE_KEY,
   routeHaystack,
   TYPE_KEY,
   type Area,
@@ -84,6 +85,21 @@ export function Explorer({ routes: allRoutes, outings: allOutings }: { routes: R
   const [view, setView] = useState<"lista" | "mapa">("lista");
   // en ambas pestañas la selección es una ruta: es lo que tiene pin en el mapa
   const [selectedId, setSelectedId] = useState<string | null>(null);
+
+  // llega desde "Abrir en el mapa" de una ruta: la elige (en móvil enseña el mapa) y limpia la URL
+  const routeParam = params.get(ROUTE_KEY);
+  const [arrivedFor, setArrivedFor] = useState<string | null>(null);
+  if (routeParam && routeParam !== arrivedFor) {
+    setArrivedFor(routeParam);
+    const route = routes.find((r) => r.slug === routeParam);
+    if (route) {
+      setSelectedId(route.id);
+      setView("mapa");
+    }
+  }
+  useEffect(() => {
+    if (routeParam) setParams({ [ROUTE_KEY]: null });
+  }, [routeParam, setParams]);
 
   // la zona solo recorta el listado: el mapa sigue mostrando los pines de fuera para poder ir hacia ellos
   const filtered = useMemo(() => routes.filter((r) => matchesFilters(r, params)), [routes, params]);

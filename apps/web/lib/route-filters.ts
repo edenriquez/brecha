@@ -45,6 +45,16 @@ export function parseActivity(value: string | null): Activity {
   return isEnabledActivity(value) ? value : "hiking";
 }
 
+/** Ruta que el explorador selecciona al abrirse; la quita de la URL en cuanto la elige. */
+export const ROUTE_KEY = "ruta";
+
+/** El explorador con la ruta elegida en el mapa, donde están las capas, el 3D y el recorrido. */
+export function mapHref(route: Pick<RouteSummary, "slug" | "activity">) {
+  const params = new URLSearchParams({ [ROUTE_KEY]: route.slug });
+  if (route.activity !== "hiking") params.set(ACTIVITY_KEY, route.activity);
+  return `/?${params}`;
+}
+
 export function normalize(text: string) {
   return text.normalize("NFD").replace(/\p{Diacritic}/gu, "").toLowerCase().trim();
 }
