@@ -36,3 +36,15 @@ Los correos del enlace mágico llegan a Inbucket: http://127.0.0.1:54374.
 ## Migraciones
 
 Crea una con `supabase migration new <nombre>` y pruébala con `pnpm db:reset`. Al hacer merge a `main`, `supabase.yml` la aplica al proyecto de producción.
+
+## Rutas trazadas en AllTrails
+
+En el [planificador de AllTrails](https://www.alltrails.com/explore/custom-routes/new) marca el inicio y el final; en DevTools › Network copia la respuesta que trae `routes` y `costings`. Luego:
+
+```sh
+pbpaste | pnpm rutas nueva cascada-de-la-burbuja   # crea supabase/rutas/<slug>.json y su vista previa .geojson
+pnpm rutas revisar cascada-de-la-burbuja           # después de editar nombre, zona, descripción, tipo y etiquetas
+pnpm rutas migrar cascada-de-la-burbuja            # escribe la migración (sin slugs: todas las de supabase/rutas)
+```
+
+El trazo de AllTrails es solo la ida: con `"route_type": "ida_vuelta"` se completa con el regreso. La altitud sale del MDE de 5 m del Izta-Popo (bucket `capas` de `NEXT_PUBLIC_SUPABASE_URL`) o de Terrarium fuera de él. Si la ruta ya existe, la migración solo le cambia el trazo.

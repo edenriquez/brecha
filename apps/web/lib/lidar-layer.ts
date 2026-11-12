@@ -4,7 +4,7 @@ import type { FeatureCollection, Point } from "geojson";
 import { Protocol } from "pmtiles";
 import { maplibregl } from "@/lib/maplibre";
 
-const BASE = `${process.env.NEXT_PUBLIC_SUPABASE_URL}/storage/v1/object/public/capas/lidar-izta`;
+export const BASE = `${process.env.NEXT_PUBLIC_SUPABASE_URL}/storage/v1/object/public/capas/lidar-izta`;
 const ATTRIBUTION = "Relieve: INEGI, modelo digital de elevación 5 m";
 
 export const FINDING_COLORS = {
@@ -36,7 +36,7 @@ const OVERLAYS = ["lidar-coverage", "lidar-candidates", "lidar-findings"];
 let protocol: Protocol | null = null;
 const loading = new WeakMap<maplibregl.Map, Promise<Manifest>>();
 
-function popupContent(lines: [className: string, text: string][]) {
+export function popupContent(lines: [className: string, text: string][]) {
   const root = document.createElement("div");
   root.className = "max-w-64 space-y-1 font-body text-xs text-on-surface";
   for (const [className, text] of lines) {
@@ -80,11 +80,12 @@ function waterfallPopup(w: Waterfall, [lng, lat]: number[]) {
   ]);
 }
 
-function onClickShow<T>(map: maplibregl.Map, layer: string, content: (props: T, coords: number[]) => HTMLElement) {
+/** Ficha al tocar un elemento: en un punto sale del punto, en una línea o un área, de donde se tocó. */
+export function onClickShow<T>(map: maplibregl.Map, layer: string, content: (props: T, coords: number[]) => HTMLElement) {
   map.on("click", layer, (e) => {
     const feature = e.features?.[0];
     if (!feature) return;
-    const coords = (feature.geometry as Point).coordinates;
+    const coords = feature.geometry.type === "Point" ? (feature.geometry as Point).coordinates : [e.lngLat.lng, e.lngLat.lat];
     new maplibregl.Popup({ maxWidth: "280px" })
       .setLngLat(coords as [number, number])
       .setDOMContent(content(feature.properties as T, coords))
@@ -94,9 +95,17 @@ function onClickShow<T>(map: maplibregl.Map, layer: string, content: (props: T, 
   map.on("mouseleave", layer, () => (map.getCanvas().style.cursor = ""));
 }
 
-/** Las capas de datos van justo debajo del trazo de la ruta o, sin trazo, de la primera etiqueta. */
-function overlayAnchor(map: maplibregl.Map) {
-  return map.getLayer("track-casing") ? "track-casing" : map.getStyle().layers?.find((l) => l.type === "symbol")?.id;
+const LINE_LAYERS = ["view-zones", "streams-main", "streams-minor", "roads-casing", "roads", "lidar-coverage"];
+const POINT_LAYERS = ["lidar-candidates", "lidar-findings", "waterfalls", "viewpoints", "camps"];
+
+/**
+ * Dónde insertar relieves y líneas para que, sin importar el orden en que se prendan, queden debajo del
+ * trazo de la ruta (o de las etiquetas) y los relieves debajo de las líneas. Los puntos van encima de todo.
+ */
+export function overlayAnchor(map: maplibregl.Map, kind: "raster" | "lines") {
+  const above = new Set(kind === "raster" ? [...LINE_LAYERS, ...POINT_LAYERS] : POINT_LAYERS);
+  const hasTrack = !!map.getLayer("track-casing");
+  return map.getStyle().layers?.find((l) => above.has(l.id) || (hasTrack ? l.id === "track-casing" : l.type === "symbol"))?.id;
 }
 
 async function addLayers(map: maplibregl.Map): Promise<Manifest> {
@@ -105,20 +114,15 @@ async function addLayers(map: maplibregl.Map): Promise<Manifest> {
     protocol = new Protocol();
     maplibregl.addProtocol("pmtiles", protocol.tile);
   }
-  // el relieve va debajo de los cauces (si ya se prendieron), del trazo de la ruta y de las etiquetas
-  const below = overlayAnchor(map);
   manifest.partes.forEach((file, i) => {
     const id = `lidar-relief-${i}`;
     map.addSource(id, { type: "raster", url: `pmtiles://${BASE}/${file}`, tileSize: 256, attribution: ATTRIBUTION });
-    map.addLayer(
-      { id, type: "raster", source: id, paint: { "raster-opacity": 0.85, "raster-fade-duration": 150 } },
-      map.getLayer("streams-main") ? "streams-main" : below,
-    );
+    map.addLayer({ id, type: "raster", source: id, paint: { "raster-opacity": 0.85, "raster-fade-duration": 150 } }, overlayAnchor(map, "raster"));
   });
   map.addSource("lidar-coverage", { type: "geojson", data: `${BASE}/cobertura.geojson` });
   map.addLayer(
     { id: "lidar-coverage", type: "line", source: "lidar-coverage", paint: { "line-color": "#1d3557", "line-width": 1.5, "line-dasharray": [3, 2] } },
-    below,
+    overlayAnchor(map, "lines"),
   );
   map.addSource("lidar-candidates", { type: "geojson", data: `${BASE}/candidatos.geojson` });
   map.addLayer({
@@ -182,7 +186,7 @@ const waterfallsLoading = new WeakMap<maplibregl.Map, Promise<maplibregl.LngLatB
 
 async function addWaterfallLayers(map: maplibregl.Map) {
   const waterfalls: FeatureCollection<Point> = await fetch(`${BASE}/cascadas.geojson`).then((r) => r.json());
-  const below = overlayAnchor(map);
+  const below = overlayAnchor(map, "lines");
   map.addSource("streams", { type: "geojson", data: `${BASE}/cauces.geojson`, attribution: ATTRIBUTION });
   // ancho según el área que drena el cauce; los arroyos chicos solo de cerca
   const width = (k: number): maplibregl.ExpressionSpecification => [
