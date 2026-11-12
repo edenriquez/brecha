@@ -7,7 +7,7 @@ import { ArrowDown, ArrowUp, CheckCircle2, FileUp, ImagePlus, Loader2, Mountain,
 import { createRoute, updateRoute, type RouteActionState } from "@/app/rutas/actions";
 import { ElevationProfile } from "@/components/elevation-profile";
 import { TrackMap } from "@/components/route-map-lazy";
-import { fillElevationFromDem } from "@/lib/dem";
+import { elevationFromDem } from "@/lib/dem";
 import { analyzeTrack, GpxError, packPoints, parseGpx, parseGpxName, suggestDifficulty, type ProfilePoint, type TrackAnalysis } from "@/lib/gpx";
 import type { LineCoords } from "@/lib/maplibre";
 import { DIFFICULTY, formatKm, ROUTE_TYPE, type Difficulty, type RouteFields, type RouteStatus, type RouteSummary } from "@/lib/routes";
@@ -41,7 +41,8 @@ export type EditingRoute = {
   canEditTrack: boolean;
 };
 
-type Loaded = { file: File; analysis: TrackAnalysis; demElevation: boolean };
+/** elevation: de dónde sale la altitud (GPS del archivo, MDE de 5 m de INEGI o Terrarium ~30 m) */
+type Loaded = { file: File; analysis: TrackAnalysis; elevation: "gps" | "fine" | "coarse"; gpsGainM: number | null };
 type RouteType = RouteSummary["route_type"];
 
 /** Sin `editing` sube una ruta nueva desde un GPX; con él edita una existente. */
@@ -92,17 +93,19 @@ export function RouteForm({ userId, editing }: { userId: string; editing?: Editi
     try {
       const xml = await file.text();
       let analysis = analyzeTrack(parseGpx(xml));
-      let demElevation = false;
-      if (!analysis.profile) {
-        setReading("El GPX no trae altitud: la calculamos con el modelo de elevación…");
-        try {
-          analysis = analyzeTrack(await fillElevationFromDem(analysis.points), { resampled: true });
-          demElevation = true;
-        } catch {
-          // sin modelo de elevación la ruta se guarda sin perfil ni desnivel
+      let elevation: Loaded["elevation"] = "gps";
+      const gpsGainM = analysis.gainM;
+      setReading(analysis.profile ? "Revisando la altitud con el modelo del terreno…" : "El GPX no trae altitud: la calculamos con el modelo de elevación…");
+      try {
+        const dem = await elevationFromDem(analysis.points, { fineOnly: !!analysis.profile });
+        if (dem) {
+          analysis = analyzeTrack(dem.points, { resampled: true });
+          elevation = dem.fine ? "fine" : "coarse";
         }
+      } catch {
+        // sin modelo de elevación se queda la del GPS o, si no traía, la ruta se guarda sin perfil ni desnivel
       }
-      setLoaded({ file, analysis, demElevation });
+      setLoaded({ file, analysis, elevation, gpsGainM });
       setReplacing(false);
       setActive(null);
       setName((n) => n || (parseGpxName(xml) ?? file.name.replace(/\.gpx$/i, "").replace(/[-_]+/g, " ")).slice(0, 80));
@@ -385,7 +388,13 @@ export function RouteForm({ userId, editing }: { userId: string; editing?: Editi
                 {preview.profile ? (
                   <>
                     <ElevationProfile profile={preview.profile} active={active} onActive={setActive} />
-                    {loaded?.demElevation && <p className="mt-2 text-[11px] text-on-surface-variant">El GPX no traía altitud: la tomamos del modelo de elevación del terreno.</p>}
+                    {loaded && loaded.elevation !== "gps" && (
+                      <p className="mt-2 text-[11px] text-on-surface-variant">
+                        {loaded.elevation === "fine"
+                          ? `Altitud del modelo del terreno de 5 m de INEGI, más precisa que la del GPS${loaded.gpsGainM === null ? "" : ` (tu archivo marcaba ${loaded.gpsGainM.toLocaleString("es-MX")} m de desnivel)`}.`
+                          : "El GPX no traía altitud: la tomamos del modelo de elevación del terreno."}
+                      </p>
+                    )}
                   </>
                 ) : (
                   <p className="flex items-center gap-2 text-xs text-on-surface-variant">
