@@ -13,7 +13,7 @@ import { PMTiles } from "pmtiles";
 import sharp from "sharp";
 import { DEM_TILES } from "../lib/dem.ts";
 import { analyzeTrack, haversineM, packPoints, resample, suggestDifficulty, type TrackAnalysis, type TrackPoint } from "../lib/gpx.ts";
-import { DIFFICULTY, ROUTE_TYPE, formatDuration, type Difficulty, type RouteSummary } from "../lib/routes.ts";
+import { ACTIVITY, DIFFICULTY, ENABLED_ACTIVITIES, ROUTE_TYPE, formatDuration, isEnabledActivity, type Activity, type Difficulty, type RouteSummary } from "../lib/routes.ts";
 
 type RouteType = RouteSummary["route_type"];
 
@@ -21,6 +21,8 @@ type RouteType = RouteSummary["route_type"];
 type AllTrailsResponse = { routes?: { paths?: { polyline?: string }[] }[][]; errors?: number };
 
 type RutaFile = {
+  /** hiking si falta */
+  activity?: Activity;
   name: string;
   place_label: string;
   description?: string | null;
@@ -245,6 +247,9 @@ function listFiles(args: string[]) {
 function validate(slug: string, file: RutaFile): string[] {
   const errors: string[] = [];
   if (!SLUG.test(slug) || slug === "nueva") errors.push(`el nombre del archivo (${slug}) no sirve como slug: usa minúsculas, números y guiones`);
+  if (file.activity !== undefined && !isEnabledActivity(file.activity)) errors.push(`\`activity\` debe ser ${ENABLED_ACTIVITIES.join(", ")}`);
+  // la dificultad y la duración que se sugieren son a pie
+  if (file.activity === "offroad" && (!file.difficulty || file.duration_min === undefined)) errors.push("una ruta offroad necesita `difficulty` y `duration_min` (manejando)");
   if (!file.name || file.name.length < 3 || file.name.length > 80) errors.push("`name` debe tener entre 3 y 80 caracteres");
   if (!file.place_label || file.place_label.length < 3 || file.place_label.length > 80) errors.push("`place_label` debe tener entre 3 y 80 caracteres (\"Amecameca, Edomex\")");
   if ((file.description ?? "").length > 3000) errors.push("`description` no puede pasar de 3,000 caracteres");
@@ -321,7 +326,7 @@ function report(r: Ruta, previewPath: string) {
   const a = r.analysis;
   const coords = (p: TrackPoint) => `${round(p.lat, 5)}, ${round(p.lng, 5)}  https://www.google.com/maps?q=${round(p.lat, 5)},${round(p.lng, 5)}`;
   const given = (value: unknown, label: string) => (value === undefined ? ` (${label})` : "");
-  console.log(`\n${r.slug} · ${r.file.name} · ${r.file.place_label}`);
+  console.log(`\n${r.slug} · ${r.file.name} · ${r.file.place_label} · ${ACTIVITY[r.file.activity ?? "hiking"].label}`);
   console.log(`  trazo       ${r.vertices} vértices de AllTrails → ${a.points.length} puntos cada 20 m`);
   console.log(`  distancia   ${round(a.distanceKm, 1)} km, ${ROUTE_TYPE[r.routeType].toLowerCase()}${given(r.file.route_type, "detectado")}`);
   console.log(`  desnivel    +${a.gainM} m / −${a.lossM} m, de ${a.minEle} a ${a.maxEle} m · ${r.demSource}`);
@@ -346,10 +351,10 @@ function insertSql(r: Ruta) {
   const tags = r.file.tags ?? [];
   return `-- ${r.file.name} (supabase/rutas/${r.slug}.json)
 insert into public.routes
-  (slug, name, place_label, description, difficulty, route_type, distance_km, elevation_gain_m, duration_min,
+  (slug, activity, name, place_label, description, difficulty, route_type, distance_km, elevation_gain_m, duration_min,
    start_point, track, elevation_profile, tags, status)
 values
-  (${quote(r.slug)}, ${quote(r.file.name)}, ${quote(r.file.place_label)},
+  (${quote(r.slug)}, ${quote(r.file.activity ?? "hiking")}, ${quote(r.file.name)}, ${quote(r.file.place_label)},
    ${r.file.description ? quote(r.file.description) : "null"},
    ${quote(r.difficulty)}, ${quote(r.routeType)}, ${round(r.analysis.distanceKm, 1)}, ${r.analysis.gainM ?? 0}, ${r.durationMin},
    'SRID=4326;POINT(${lng} ${lat})'::extensions.geography,
@@ -427,6 +432,7 @@ async function nueva(slug: string | undefined) {
     .map((w, i) => (i && ["de", "del", "la", "las", "el", "los", "y"].includes(w) ? w : w[0].toUpperCase() + w.slice(1)))
     .join(" ");
   const file: RutaFile = {
+    activity: "hiking",
     name,
     place_label: await placeLabel(start),
     description: "",
@@ -436,7 +442,7 @@ async function nueva(slug: string | undefined) {
   };
   mkdirSync(RUTAS_DIR, { recursive: true });
   writeFileSync(path, `${JSON.stringify(file, null, 2)}\n`);
-  console.log(`${relative(ROOT, path)}: revisa nombre, zona, descripción, tipo y etiquetas (dificultad y duración son opcionales)`);
+  console.log(`${relative(ROOT, path)}: revisa actividad, nombre, zona, descripción, tipo y etiquetas (dificultad y duración son opcionales en hiking)`);
   return path;
 }
 

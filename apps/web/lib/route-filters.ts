@@ -1,4 +1,4 @@
-import { DIFFICULTY, ROUTE_TYPE, type Difficulty, type RouteSummary } from "@/lib/routes";
+import { DIFFICULTY, isEnabledActivity, ROUTE_TYPE, type Activity, type Difficulty, type RouteSummary } from "@/lib/routes";
 
 type Range = { id: string; label: string; min?: number; max?: number };
 
@@ -38,6 +38,12 @@ export const RANGE_KEYS = Object.keys(RANGES) as RangeKey[];
 export const TYPE_KEY = "tipo";
 export const DIFFICULTY_KEY = "dificultad";
 export const QUERY_KEY = "q";
+/** No es un filtro más: elige qué rutas se exploran, así que "Limpiar filtros" no la quita. */
+export const ACTIVITY_KEY = "actividad";
+
+export function parseActivity(value: string | null): Activity {
+  return isEnabledActivity(value) ? value : "hiking";
+}
 
 export function normalize(text: string) {
   return text.normalize("NFD").replace(/\p{Diacritic}/gu, "").toLowerCase().trim();

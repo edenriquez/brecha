@@ -10,7 +10,7 @@ import { TrackMap } from "@/components/route-map-lazy";
 import { elevationFromDem } from "@/lib/dem";
 import { analyzeTrack, GpxError, packPoints, parseGpx, parseGpxName, suggestDifficulty, type ProfilePoint, type TrackAnalysis } from "@/lib/gpx";
 import type { LineCoords } from "@/lib/maplibre";
-import { DIFFICULTY, formatKm, ROUTE_TYPE, type Difficulty, type RouteFields, type RouteStatus, type RouteSummary } from "@/lib/routes";
+import { ACTIVITY, DIFFICULTY, ENABLED_ACTIVITIES, formatKm, ROUTE_TYPE, type Activity, type Difficulty, type RouteFields, type RouteStatus, type RouteSummary } from "@/lib/routes";
 import { createClient } from "@/lib/supabase/client";
 
 const input =
@@ -22,7 +22,7 @@ const GPX_MAX = 5 * 1024 * 1024;
 const PHOTO_MAX = 10 * 1024 * 1024;
 const PHOTO_TYPES: Record<string, string> = { "image/jpeg": "jpg", "image/png": "png", "image/webp": "webp" };
 
-const EMPTY: RouteFields = { name: "", place_label: "", difficulty: "moderada", route_type: "ida_vuelta", duration_min: 0, description: "", tags: "", cover_url: null };
+const EMPTY: RouteFields = { activity: "hiking", name: "", place_label: "", difficulty: "moderada", route_type: "ida_vuelta", duration_min: 0, description: "", tags: "", cover_url: null };
 
 export type TrackPreview = {
   line: LineCoords;
@@ -45,11 +45,11 @@ export type EditingRoute = {
 type Loaded = { file: File; analysis: TrackAnalysis; elevation: "gps" | "fine" | "coarse"; gpsGainM: number | null };
 type RouteType = RouteSummary["route_type"];
 
-/** Sin `editing` sube una ruta nueva desde un GPX; con él edita una existente. */
-export function RouteForm({ userId, editing }: { userId: string; editing?: EditingRoute }) {
+/** Sin `editing` sube una ruta nueva desde un GPX (de la actividad `activity`); con él edita una existente. */
+export function RouteForm({ userId, editing, activity: newActivity }: { userId: string; editing?: EditingRoute; activity?: Activity }) {
   const action = editing ? updateRoute.bind(null, { id: editing.id, slug: editing.slug }) : createRoute;
   const [state, formAction, saving] = useActionState<RouteActionState, FormData>(action, { error: null });
-  const initial = editing?.fields ?? EMPTY;
+  const initial = editing?.fields ?? { ...EMPTY, activity: newActivity ?? EMPTY.activity };
   const canEditTrack = editing?.canEditTrack ?? true;
 
   const [loaded, setLoaded] = useState<Loaded | null>(null);
@@ -60,6 +60,7 @@ export function RouteForm({ userId, editing }: { userId: string; editing?: Editi
   const [uploadError, setUploadError] = useState<string | null>(null);
   const [active, setActive] = useState<number | null>(null);
 
+  const [activity, setActivity] = useState<Activity>(initial.activity);
   const [name, setName] = useState(initial.name);
   const [placeLabel, setPlaceLabel] = useState(initial.place_label);
   const [difficulty, setDifficulty] = useState<Difficulty>(initial.difficulty);
@@ -193,6 +194,30 @@ export function RouteForm({ userId, editing }: { userId: string; editing?: Editi
     <div className="grid grid-cols-1 items-start gap-8 lg:grid-cols-12">
       <form onSubmit={onSubmit} className="space-y-6 lg:col-span-7">
         <section className="space-y-6 rounded-xl border border-outline-variant bg-surface-container-lowest p-6 shadow-sm sm:p-7">
+          <fieldset>
+            <legend className={label}>Actividad</legend>
+            <div className="grid grid-cols-2 gap-2">
+              {ENABLED_ACTIVITIES.map((key) => (
+                <label
+                  key={key}
+                  className={clsx(
+                    "flex cursor-pointer flex-col items-center justify-center rounded-lg border px-3 py-2.5 text-xs transition-all",
+                    activity === key
+                      ? "border-primary-container bg-primary-container font-bold text-on-primary shadow-sm"
+                      : "border-outline-variant bg-surface-container-lowest font-semibold hover:border-primary",
+                  )}
+                >
+                  <input type="radio" name="activity" value={key} checked={activity === key} onChange={() => setActivity(key)} className="sr-only" />
+                  <span className="flex items-center gap-1.5">
+                    {activity === key && <CheckCircle2 className="size-4" aria-hidden />}
+                    {ACTIVITY[key].label}
+                  </span>
+                  <span className={clsx("mt-0.5 text-[11px] font-medium", activity === key ? "text-on-primary/80" : "text-on-surface-variant")}>{ACTIVITY[key].subtitle}</span>
+                </label>
+              ))}
+            </div>
+          </fieldset>
+
           <div>
             <label className={label} htmlFor="name">
               Nombre de la ruta
@@ -235,13 +260,14 @@ export function RouteForm({ userId, editing }: { userId: string; editing?: Editi
                   <input type="radio" name="difficulty" value={key} checked={difficulty === key} onChange={() => setDifficulty(key)} className="sr-only" />
                   <span className={clsx("size-2 rounded-full", DIFFICULTY[key].dot)} />
                   {DIFFICULTY[key].label}
-                  {suggested === key && (
+                  {suggested === key && activity === "hiking" && (
                     <span className="absolute -top-2 right-1.5 rounded-full bg-secondary-fixed px-1.5 text-[9px] font-bold text-secondary uppercase">Sugerida</span>
                   )}
                 </label>
               ))}
             </div>
-            {suggested && <p className={hint}>La sugerimos por distancia, desnivel y altura; ajústala si conoces el terreno.</p>}
+            {suggested && activity === "hiking" && <p className={hint}>La sugerimos por distancia, desnivel y altura; ajústala si conoces el terreno.</p>}
+            {activity === "offroad" && <p className={hint}>Piensa en el vehículo que hace falta: Fácil para cualquier camioneta, Experto solo para 4x4 preparadas.</p>}
           </fieldset>
 
           <fieldset>
@@ -266,14 +292,18 @@ export function RouteForm({ userId, editing }: { userId: string; editing?: Editi
           </fieldset>
 
           <fieldset>
-            <legend className={label}>Duración caminando</legend>
+            <legend className={label}>{activity === "offroad" ? "Duración manejando" : "Duración caminando"}</legend>
             <div className="flex items-center gap-2">
               <input name="hours" type="number" aria-label="Horas" required min={0} max={48} value={hours} onChange={(e) => setHours(Number(e.target.value))} className={clsx(input, "max-w-20")} />
               <span className="text-sm text-on-surface-variant">h</span>
               <input name="minutes" type="number" aria-label="Minutos" required min={0} max={45} step={15} value={minutes} onChange={(e) => setMinutes(Number(e.target.value))} className={clsx(input, "max-w-20")} />
               <span className="text-sm text-on-surface-variant">min</span>
             </div>
-            {loaded && !editing && <p className={hint}>Estimada con el método MIDE (4 km/h en plano, 400 m/h de subida), sin contar paradas.</p>}
+            {activity === "offroad" ? (
+              <p className={hint}>Lo que tarda recorrerla en el vehículo, sin contar paradas.{loaded && !editing && " La que pusimos es a pie: corrígela."}</p>
+            ) : (
+              loaded && !editing && <p className={hint}>Estimada con el método MIDE (4 km/h en plano, 400 m/h de subida), sin contar paradas.</p>
+            )}
           </fieldset>
 
           <div>

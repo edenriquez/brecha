@@ -3,6 +3,7 @@ import { cache } from "react";
 import { createAnonClient, type createClient } from "@/lib/supabase/server";
 import type { MyOuting, OutingCardData, OutingDetail, OutingSummary, Person } from "@/lib/outings";
 import { PERSON_COLUMNS } from "@/lib/profiles";
+import { ENABLED_ACTIVITIES } from "@/lib/routes";
 
 const ROUTE_COLUMNS = "id, slug, name, place_label, difficulty, cover_url, distance_km, elevation_gain_m, duration_min";
 const SUMMARY_COLUMNS = "id, title, starts_at, meeting_point_label, capacity, outing_members(count)";
@@ -28,11 +29,11 @@ export async function listUpcomingOutings(routeId: string): Promise<OutingSummar
   return (data as unknown as SummaryRow[]).map(withMembers);
 }
 
-/** Salidas próximas de rutas de hiking publicadas, para la pestaña del explorador. */
+/** Salidas próximas de rutas publicadas de las actividades activas, para la pestaña del explorador. */
 export async function listAllUpcomingOutings(): Promise<OutingCardData[]> {
   if (!process.env.NEXT_PUBLIC_SUPABASE_URL) return [];
   const { data, error } = await upcoming(`${SUMMARY_COLUMNS}, route:routes!inner(${ROUTE_COLUMNS})`)
-    .eq("route.activity", "hiking")
+    .in("route.activity", ENABLED_ACTIVITIES)
     .eq("route.status", "publicada")
     .order("starts_at")
     .limit(60);

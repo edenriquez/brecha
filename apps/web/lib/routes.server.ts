@@ -6,9 +6,9 @@ import { RECENT_REPORT_DAYS, shiftDay, type RoutePhoto, type TrailReport } from 
 import { todayInMexicoCity } from "@/lib/outings";
 import { PERSON_COLUMNS } from "@/lib/profiles";
 import { createAnonClient } from "@/lib/supabase/server";
-import { ROUTE_FIELDS_COLUMNS, toRouteFields, type RouteDetail, type RouteFields, type RouteShape, type RouteStatus, type RouteSummary } from "@/lib/routes";
+import { ENABLED_ACTIVITIES, ROUTE_FIELDS_COLUMNS, toRouteFields, type RouteDetail, type RouteFields, type RouteShape, type RouteStatus, type RouteSummary } from "@/lib/routes";
 
-export const SUMMARY_COLUMNS = "id, slug, name, place_label, difficulty, route_type, distance_km, elevation_gain_m, duration_min, cover_url, tags, lat, lng, upcoming_outings";
+export const SUMMARY_COLUMNS = "id, slug, activity, name, place_label, difficulty, route_type, distance_km, elevation_gain_m, duration_min, cover_url, tags, lat, lng, upcoming_outings";
 
 export async function listRoutes(): Promise<RouteSummary[]> {
   // el build de CI corre sin Supabase: la página se prerenderiza vacía y en Vercel se llena con datos reales
@@ -17,7 +17,7 @@ export async function listRoutes(): Promise<RouteSummary[]> {
   const { data, error } = await supabase
     .from("routes_feed")
     .select(SUMMARY_COLUMNS)
-    .eq("activity", "hiking")
+    .in("activity", ENABLED_ACTIVITIES)
     .order("upcoming_outings", { ascending: false })
     .order("name");
   if (error) throw new Error(`routes_feed: ${error.message}`);

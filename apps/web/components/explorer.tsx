@@ -29,6 +29,7 @@ import { RouteMap } from "@/components/route-map-lazy";
 import { SearchBox } from "@/components/search-box";
 import { TopNav } from "@/components/top-nav";
 import {
+  ACTIVITY_KEY,
   AREA_KEY,
   countPanelFilters,
   DIFFICULTY_KEY,
@@ -36,6 +37,7 @@ import {
   inArea,
   matchesFilters,
   matchesQuery,
+  parseActivity,
   parseArea,
   QUERY_KEY,
   RANGE_KEYS,
@@ -43,7 +45,7 @@ import {
   TYPE_KEY,
   type Area,
 } from "@/lib/route-filters";
-import { DIFFICULTY, formatDuration, formatKm, type Difficulty, type RouteSummary } from "@/lib/routes";
+import { ACTIVITY, DIFFICULTY, formatDuration, formatKm, type Activity, type Difficulty, type RouteSummary } from "@/lib/routes";
 import type { ProfilePoint } from "@/lib/gpx";
 import type { LineCoords } from "@/lib/maplibre";
 import type { OutingCardData } from "@/lib/outings";
@@ -54,9 +56,20 @@ const DIFFICULTIES: Difficulty[] = ["facil", "moderada", "dificil"];
 /** El breakpoint `lg` de Tailwind: desde ahí la lista y el mapa se ven lado a lado. */
 const SIDE_BY_SIDE = "(min-width: 1024px)";
 const CLEARED = Object.fromEntries([QUERY_KEY, DIFFICULTY_KEY, TYPE_KEY, AREA_KEY, ...RANGE_KEYS].map((k) => [k, null]));
+const ACTIVITY_ICON: Record<Activity, React.ReactNode> = {
+  hiking: <Footprints className="size-5" />,
+  bici: <Bike className="size-5" />,
+  offroad: <CarFront className="size-5" />,
+};
 
-export function Explorer({ routes, outings }: { routes: RouteSummary[]; outings: OutingCardData[] }) {
+export function Explorer({ routes: allRoutes, outings: allOutings }: { routes: RouteSummary[]; outings: OutingCardData[] }) {
   const [params, setParams] = useUrlParams();
+  const activity = parseActivity(params.get(ACTIVITY_KEY));
+  const routes = useMemo(() => allRoutes.filter((r) => r.activity === activity), [allRoutes, activity]);
+  const outings = useMemo(() => {
+    const ids = new Set(routes.map((r) => r.id));
+    return allOutings.filter((o) => ids.has(o.route.id));
+  }, [allOutings, routes]);
   const query = params.get(QUERY_KEY) ?? "";
   const difficulty = params.get(DIFFICULTY_KEY);
   const tab = params.get("ver") === "salidas" ? "salidas" : "rutas";
@@ -149,9 +162,20 @@ export function Explorer({ routes, outings }: { routes: RouteSummary[]; outings:
           </p>
 
           <div className="mb-3 grid grid-cols-3 gap-2">
-            <ActivityTile icon={<Footprints className="size-5" />} title="Hiking" subtitle="Senderos y cumbres" active />
-            <ActivityTile icon={<Bike className="size-5" />} title="Bici" subtitle="Gravel y MTB" />
-            <ActivityTile icon={<CarFront className="size-5" />} title="Offroad" subtitle="Rutas 4x4 y brechas" />
+            {(Object.keys(ACTIVITY) as Activity[]).map((a) => (
+              <ActivityTile
+                key={a}
+                icon={ACTIVITY_ICON[a]}
+                title={ACTIVITY[a].label}
+                subtitle={ACTIVITY[a].subtitle}
+                enabled={ACTIVITY[a].enabled}
+                active={a === activity}
+                onClick={() => {
+                  setSelectedId(null);
+                  setParams({ [ACTIVITY_KEY]: a === "hiking" ? null : a });
+                }}
+              />
+            ))}
           </div>
 
           <div role="tablist" className="mb-3 flex items-center rounded-full border border-outline-variant/50 bg-surface-container p-1">
@@ -213,19 +237,23 @@ export function Explorer({ routes, outings }: { routes: RouteSummary[]; outings:
                     ? "No hay rutas en esta zona del mapa. Aléjate un poco y busca de nuevo."
                     : filtering
                       ? "Ninguna ruta coincide con tu búsqueda."
-                      : "Todavía no hay rutas publicadas."}{" "}
+                      : activity === "hiking"
+                        ? "Todavía no hay rutas publicadas."
+                        : `Todavía no hay rutas ${ACTIVITY[activity].label.toLowerCase()} publicadas.`}{" "}
                   {filtering && <ClearLink onClick={() => setParams(CLEARED)} />}
                 </Empty>
               )}
               <Link
-                href="/rutas/nueva"
+                href={activity === "hiking" ? "/rutas/nueva" : `/rutas/nueva?${ACTIVITY_KEY}=${activity}`}
                 className="flex items-center gap-3 rounded-xl border border-dashed border-outline-variant bg-surface-container-lowest/60 p-3 transition-colors hover:border-primary-container"
               >
                 <span className="flex size-9 shrink-0 items-center justify-center rounded-full bg-primary-fixed/60 text-primary">
                   <FilePlus2 className="size-5" aria-hidden />
                 </span>
                 <span className="min-w-0 flex-1">
-                  <span className="block font-headline text-sm font-bold">¿Conoces un sendero que no está aquí?</span>
+                  <span className="block font-headline text-sm font-bold">
+                    {activity === "offroad" ? "¿Conoces una brecha que no está aquí?" : "¿Conoces un sendero que no está aquí?"}
+                  </span>
                   <span className="block text-xs text-on-surface-variant">Sube su GPX y calculamos distancia, desnivel y perfil.</span>
                 </span>
                 <ChevronRight className="size-4 shrink-0 text-outline" aria-hidden />
@@ -358,35 +386,53 @@ function Chip({ active, onClick, children }: { active: boolean; onClick: () => v
   );
 }
 
-function ActivityTile({ icon, title, subtitle, active }: { icon: React.ReactNode; title: string; subtitle: string; active?: boolean }) {
+function ActivityTile({
+  icon,
+  title,
+  subtitle,
+  enabled,
+  active,
+  onClick,
+}: {
+  icon: React.ReactNode;
+  title: string;
+  subtitle: string;
+  enabled: boolean;
+  active: boolean;
+  onClick: () => void;
+}) {
+  if (!enabled) {
+    return (
+      <div aria-disabled className="relative cursor-not-allowed rounded-xl border-2 border-outline-variant/40 bg-surface-container px-2.5 py-2 opacity-75">
+        <div className="mb-1 flex items-start justify-between text-outline">
+          {icon}
+          <span className="hidden rounded bg-surface-container-high px-1.5 py-0.5 text-[10px] font-medium text-on-surface-variant @lg:inline">Próximamente</span>
+        </div>
+        <p className="font-headline text-[13px] font-semibold text-on-surface-variant">{title}</p>
+        <p className="truncate text-[11px] text-outline">
+          <span className="@lg:hidden">Próximamente</span>
+          <span className="hidden @lg:inline">{subtitle}</span>
+        </p>
+      </div>
+    );
+  }
   return (
-    <div
-      aria-disabled={!active}
+    <button
+      type="button"
+      onClick={onClick}
+      aria-pressed={active}
       className={clsx(
-        "relative rounded-xl px-2.5 py-2",
-        active ? "border-2 border-primary-container bg-surface-container-lowest shadow-xs" : "cursor-not-allowed border border-outline-variant/60 bg-surface-container opacity-75",
+        "relative rounded-xl border-2 px-2.5 py-2 text-left transition-colors",
+        active ? "border-primary-container bg-surface-container-lowest shadow-xs" : "border-outline-variant/40 bg-surface-container-lowest hover:border-primary/50",
       )}
     >
-      <div className={clsx("mb-1 flex items-start justify-between", active ? "text-primary-container" : "text-outline")}>
+      <div className={clsx("mb-1 flex items-start justify-between", active ? "text-primary-container" : "text-on-surface-variant")}>
         {icon}
-        {active ? (
-          <CircleCheck className="size-4 fill-primary-container text-surface-container-lowest" aria-hidden />
-        ) : (
-          <span className="hidden rounded bg-surface-container-high px-1.5 py-0.5 text-[10px] font-medium text-on-surface-variant @lg:inline">Próximamente</span>
-        )}
+        {active && <CircleCheck className="size-4 fill-primary-container text-surface-container-lowest" aria-hidden />}
       </div>
-      <p className={clsx("font-headline text-[13px]", active ? "font-bold text-primary" : "font-semibold text-on-surface-variant")}>{title}</p>
-      <p className={clsx("truncate text-[11px]", active ? "text-on-surface-variant" : "text-outline")}>
-        {active ? (
-          subtitle
-        ) : (
-          <>
-            <span className="@lg:hidden">Próximamente</span>
-            <span className="hidden @lg:inline">{subtitle}</span>
-          </>
-        )}
-      </p>
-    </div>
+      <p className={clsx("font-headline text-[13px]", active ? "font-bold text-primary" : "font-semibold text-on-surface")}>{title}</p>
+      <p className="truncate text-[11px] text-on-surface-variant">{subtitle}</p>
+    </button>
   );
 }
 

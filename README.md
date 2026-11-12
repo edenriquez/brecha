@@ -47,4 +47,6 @@ pnpm rutas revisar cascada-de-la-burbuja           # después de editar nombre, 
 pnpm rutas migrar cascada-de-la-burbuja            # escribe la migración (sin slugs: todas las de supabase/rutas)
 ```
 
+Para una brecha usa `"activity": "offroad"` y llena `difficulty` y `duration_min` (manejando): las que se sugieren son a pie.
+
 El trazo de AllTrails es solo la ida: con `"route_type": "ida_vuelta"` se completa con el regreso. La altitud sale del MDE de 5 m del Izta-Popo (bucket `capas` de `NEXT_PUBLIC_SUPABASE_URL`) o de Terrarium fuera de él. Si la ruta ya existe, la migración solo le cambia el trazo.

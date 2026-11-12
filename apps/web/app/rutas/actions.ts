@@ -5,7 +5,7 @@ import { redirect } from "next/navigation";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { requireUser } from "@/lib/auth.server";
 import { analyzeTrack, GpxError, toEWKT, unpackPoints, type TrackAnalysis } from "@/lib/gpx";
-import { DIFFICULTY, ROUTE_TYPE, slugify, type RouteStatus } from "@/lib/routes";
+import { DIFFICULTY, isEnabledActivity, ROUTE_TYPE, slugify, type RouteStatus } from "@/lib/routes";
 
 export type RouteActionState = { error: string | null };
 export type SuggestionState = { error: string | null; sent: boolean };
@@ -14,6 +14,7 @@ const UUID = "[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}";
 
 type ParsedRoute = {
   values: {
+    activity: string;
     name: string;
     place_label: string;
     description: string | null;
@@ -30,6 +31,7 @@ type ParsedRoute = {
 /** Valida el formulario. El navegador sube los archivos a la carpeta del usuario; el trazo se vuelve a analizar aquí. */
 function parseRouteForm(form: FormData, userId: string): { error: string } | ParsedRoute {
   const text = (name: string) => String(form.get(name) ?? "").trim();
+  const activity = text("activity");
   const name = text("name");
   const placeLabel = text("place_label");
   const description = text("description");
@@ -40,6 +42,7 @@ function parseRouteForm(form: FormData, userId: string): { error: string } | Par
   const gpxPath = text("gpx_path");
   const coverPath = text("cover_path");
 
+  if (!isEnabledActivity(activity)) return { error: "Elige si la ruta es de hiking u offroad." };
   if (name.length < 3 || name.length > 80) return { error: "El nombre de la ruta debe tener entre 3 y 80 caracteres." };
   if (placeLabel.length < 3 || placeLabel.length > 80) return { error: "Indica la zona de la ruta (3 a 80 caracteres)." };
   if (description.length > 3000) return { error: "La descripción no puede pasar de 3,000 caracteres." };
@@ -60,7 +63,7 @@ function parseRouteForm(form: FormData, userId: string): { error: string } | Par
   }
 
   return {
-    values: { name, place_label: placeLabel, description: description || null, difficulty, route_type: routeType, duration_min: durationMin, tags },
+    values: { activity, name, place_label: placeLabel, description: description || null, difficulty, route_type: routeType, duration_min: durationMin, tags },
     track,
     coverPath: coverPath || null,
   };
