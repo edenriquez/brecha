@@ -1,0 +1,28 @@
+{
+  "name": "Cascada de la Burbuja",
+  "place_label": "Amecameca, Edomex",
+  "description": "",
+  "route_type": "ida_vuelta",
+  "tags": ["cascada", "bosque"],
+  "alltrails": {
+    "routes": [
+      [
+        {
+          "paths": [
+            {
+              "polyline": "}txsBtmryQgBsCgAsAkBgCs@uA?i@^}AU_@Nc@n@Mi@e@}Bg@iA`@iAJ{BYgAb@e@Oo@}@}@g@cAUEiADuBPqBK_AKuA?uAOkAg@cBGw@_@}@_Ae@U}@Aq@r@oAJgAH{BPm@N_AUs@[s@c@_@u@s@_@}@e@m@}B}@wB}@iCOgBBiAc@Cq@]yA]}@sA@}AGs@wAk@aBEqAa@oAuA}@i@uAk@_AcAq@i@y@E}@[yAgAm@KkBeA_BEsD"
+            }
+          ]
+        }
+      ]
+    ],
+    "costings": {
+      "leastGain": 1,
+      "mostScenic": 1,
+      "mostPopular": 1,
+      "makeShorter": 1
+    },
+    "alerts": [],
+    "errors": 0
+  }
+}
