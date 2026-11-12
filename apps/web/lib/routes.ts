@@ -1,3 +1,5 @@
+import type { MouseEvent } from "react";
+
 export type Difficulty = "facil" | "moderada" | "dificil" | "experto";
 
 export type Activity = "hiking" | "bici" | "offroad";
@@ -116,4 +118,10 @@ export function googleMapsDirections(lat: number, lng: number) {
 
 export function googleMapsSearch(query: string) {
   return `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(query)}`;
+}
+
+/** Clic en una tarjeta del explorador: si `onSelect` la enfoca en el mapa, no abre el enlace. Con Cmd/Ctrl/Shift el enlace abre como siempre. */
+export function selectInstead(e: MouseEvent, onSelect: () => boolean) {
+  if (e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
+  if (onSelect()) e.preventDefault();
 }
