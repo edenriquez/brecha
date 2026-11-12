@@ -1,10 +1,10 @@
 import type { Metadata, Viewport } from "next";
-import { Inter, Plus_Jakarta_Sans } from "next/font/google";
+import localFont from "next/font/local";
 import { ServiceWorker } from "@/components/service-worker";
 import "./globals.css";
 
-const jakarta = Plus_Jakarta_Sans({ subsets: ["latin"], weight: ["600", "700", "800"], variable: "--font-jakarta" });
-const inter = Inter({ subsets: ["latin"], variable: "--font-inter" });
+const jakarta = localFont({ src: "./fonts/plus-jakarta-sans-latin.woff2", weight: "600 800", variable: "--font-jakarta" });
+const inter = localFont({ src: "./fonts/inter-latin.woff2", weight: "100 900", variable: "--font-inter" });
 
 export const metadata: Metadata = {
   metadataBase: new URL(process.env.NEXT_PUBLIC_SITE_URL ?? "http://localhost:3000"),
