@@ -6,6 +6,7 @@ import clsx from "clsx";
 import { ArrowLeftRight, CalendarPlus, Clock, Download, Map as MapIcon, MapPin, Megaphone, Mountain, Navigation, Ruler, TrendingUp, Users } from "lucide-react";
 import { Avatar } from "@/components/avatar";
 import { FavoriteButton } from "@/components/favorite-button";
+import { OfflineDownload } from "@/components/offline-download";
 import { StartPointMap } from "@/components/route-map-lazy";
 import { RouteFeedback } from "@/components/route-feedback";
 import { RoutePhotos } from "@/components/route-photos";
@@ -159,7 +160,22 @@ export default async function RoutePage({ params }: Props) {
                 </div>
               </div>
               {shape ? (
-                <RouteTrack line={shape.line} profile={shape.profile} />
+                <div className="space-y-5">
+                  <RouteTrack line={shape.line} profile={shape.profile} />
+                  <OfflineDownload
+                    route={{
+                      slug: route.slug,
+                      name: route.name,
+                      place_label: route.place_label,
+                      difficulty: route.difficulty,
+                      distance_km: route.distance_km,
+                      elevation_gain_m: route.elevation_gain_m,
+                      duration_min: route.duration_min,
+                    }}
+                    line={shape.line}
+                    profile={shape.profile}
+                  />
+                </div>
               ) : (
                 <div className="relative h-80 overflow-hidden rounded-xl border border-outline-variant/60 bg-[#e3e8e1] sm:h-96">
                   <StartPointMap lat={route.lat} lng={route.lng} />

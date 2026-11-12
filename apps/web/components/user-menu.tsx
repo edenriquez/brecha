@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useEffect, useId, useRef, useState } from "react";
-import { CalendarCheck, ChevronDown, ClipboardCheck, FilePlus2, Heart, HeartHandshake, LogOut, Route, ShieldCheck, UserRound } from "lucide-react";
+import { CalendarCheck, ChevronDown, ClipboardCheck, FilePlus2, Heart, HeartHandshake, LogOut, Route, ShieldCheck, UserRound, WifiOff } from "lucide-react";
 import { Avatar } from "@/components/avatar";
 import type { Person } from "@/lib/outings";
 import { PERSON_COLUMNS, profileHref } from "@/lib/profiles";
@@ -122,6 +122,10 @@ export function UserMenu() {
                 <FilePlus2 className="size-4 text-primary" aria-hidden />
                 Subir una ruta
               </Link>
+              <a href="/descargas" className={ITEM}>
+                <WifiOff className="size-4 text-primary" aria-hidden />
+                Rutas sin conexión
+              </a>
               {pending !== null && (
                 <>
                   <Link href="/admin" className={ITEM}>

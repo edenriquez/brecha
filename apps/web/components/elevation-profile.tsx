@@ -1,6 +1,7 @@
 "use client";
 
 import { useId, useMemo, useRef, type KeyboardEvent, type PointerEvent } from "react";
+import clsx from "clsx";
 import type { ProfilePoint } from "@/lib/gpx";
 
 const W = 1000;
@@ -20,10 +21,13 @@ export function ElevationProfile({
   profile,
   active,
   onActive,
+  overlay,
 }: {
   profile: ProfilePoint[];
   active: number | null;
   onActive: (index: number | null) => void;
+  /** Encima del mapa del recorrido: más bajo, y el punto solo se mueve arrastrando (no al pasar el cursor) */
+  overlay?: boolean;
 }) {
   const gradient = useId();
   const box = useRef<HTMLDivElement>(null);
@@ -89,12 +93,18 @@ export function ElevationProfile({
           aria-valuemax={total}
           aria-valuenow={point?.[0] ?? 0}
           aria-valuetext={point ? `km ${km(point[0])}, ${meters(point[1])}` : `${km(total)} km, entre ${meters(chart.minE)} y ${meters(chart.maxE)}`}
-          onPointerMove={(e: PointerEvent) => onActive(indexAt(e.clientX))}
-          onPointerDown={(e: PointerEvent) => onActive(indexAt(e.clientX))}
-          onPointerLeave={(e: PointerEvent) => e.pointerType === "mouse" && onActive(null)}
+          onPointerMove={(e: PointerEvent) => (!overlay || e.buttons) && onActive(indexAt(e.clientX))}
+          onPointerDown={(e: PointerEvent) => {
+            if (overlay) e.currentTarget.setPointerCapture(e.pointerId);
+            onActive(indexAt(e.clientX));
+          }}
+          onPointerLeave={(e: PointerEvent) => !overlay && e.pointerType === "mouse" && onActive(null)}
           onKeyDown={onKeyDown}
-          onBlur={() => onActive(null)}
-          className="relative h-40 cursor-crosshair touch-pan-y rounded-lg outline-none focus-visible:ring-2 focus-visible:ring-primary/40 sm:h-48"
+          onBlur={() => !overlay && onActive(null)}
+          className={clsx(
+            "relative rounded-lg outline-none focus-visible:ring-2 focus-visible:ring-primary/40",
+            overlay ? "h-16 cursor-ew-resize touch-none sm:h-20" : "h-40 cursor-crosshair touch-pan-y sm:h-48",
+          )}
         >
           <svg viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none" className="absolute inset-0 h-full w-full overflow-visible" aria-hidden>
             <defs>
@@ -117,6 +127,7 @@ export function ElevationProfile({
                 style={{ left: pct(chart.x(point[0]), W), top: pct(chart.y(point[1]), H) }}
               />
               <div
+                hidden={overlay}
                 className="pointer-events-none absolute top-1 -translate-x-1/2 rounded-md bg-on-surface px-2 py-1 font-mono text-[11px] whitespace-nowrap text-surface shadow"
                 style={{ left: `clamp(3.5rem, ${pct(chart.x(point[0]), W)}, calc(100% - 3.5rem))` }}
               >

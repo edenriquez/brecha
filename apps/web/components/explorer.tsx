@@ -46,6 +46,7 @@ import {
   type Area,
 } from "@/lib/route-filters";
 import { DIFFICULTY, formatDuration, formatKm, ROUTE_TYPE, type Difficulty, type RouteSummary } from "@/lib/routes";
+import type { ProfilePoint } from "@/lib/gpx";
 import type { LineCoords } from "@/lib/maplibre";
 import type { OutingCardData } from "@/lib/outings";
 import { createClient } from "@/lib/supabase/client";
@@ -96,20 +97,23 @@ export function Explorer({ routes, outings }: { routes: RouteSummary[]; outings:
   const selected = mapRoutes.find((r) => r.id === selectedId) ?? null;
   const router = useRouter();
 
-  // el trazo de la ruta elegida se pide al seleccionarla: el listado no carga los de todas
-  const [tracks, setTracks] = useState<Record<string, LineCoords | null>>({});
+  // el trazo y el perfil de la ruta elegida se piden al seleccionarla: el listado no carga los de todas
+  const [shapes, setShapes] = useState<Record<string, { line: LineCoords; profile: ProfilePoint[] | null } | null>>({});
   useEffect(() => {
-    if (!selectedId || selectedId in tracks) return;
+    if (!selectedId || selectedId in shapes) return;
     createClient()
       .from("route_shapes")
-      .select("track")
+      .select("track, elevation_profile")
       .eq("id", selectedId)
       .maybeSingle()
       .then(({ data }) => {
         const line = (data?.track as LineString | undefined)?.coordinates as LineCoords | undefined;
-        setTracks((t) => ({ ...t, [selectedId]: line ?? null }));
+        const profile = data?.elevation_profile as ProfilePoint[] | null | undefined;
+        setShapes((s) => ({ ...s, [selectedId]: line ? { line, profile: profile && profile.length > 1 ? profile : null } : null }));
       });
-  }, [selectedId, tracks]);
+  }, [selectedId, shapes]);
+  const shape = selected ? shapes[selected.id] : null;
+  const [touring, setTouring] = useState(false);
 
   // primer clic en un pin lo selecciona; el segundo abre la ruta
   function selectOrOpen(id: string) {
@@ -288,11 +292,13 @@ export function Explorer({ routes, outings }: { routes: RouteSummary[]; outings:
             routes={mapRoutes}
             selectedId={selectedId}
             onSelect={selectOrOpen}
-            track={selected ? (tracks[selected.id] ?? null) : null}
+            track={shape === undefined ? undefined : (shape?.line ?? null)}
+            profile={shape?.profile ?? null}
             area={area}
             onUserMove={setMoved}
+            onTourChange={setTouring}
           />
-          {canSearchArea && (
+          {canSearchArea && !touring && (
             <button
               type="button"
               onClick={() => {
@@ -307,7 +313,7 @@ export function Explorer({ routes, outings }: { routes: RouteSummary[]; outings:
               Buscar en esta zona
             </button>
           )}
-          {selected && <MapPeek route={selected} />}
+          {selected && !touring && <MapPeek route={selected} />}
         </section>
 
         <button
