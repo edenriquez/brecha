@@ -1,8 +1,24 @@
 export type Difficulty = "facil" | "moderada" | "dificil" | "experto";
 
+export type Activity = "hiking" | "bici" | "offroad";
+
+/** `enabled`: se explora y se sube; las demás salen como "Próximamente". */
+export const ACTIVITY: Record<Activity, { label: string; subtitle: string; enabled: boolean }> = {
+  hiking: { label: "Hiking", subtitle: "Senderos y cumbres", enabled: true },
+  bici: { label: "Bici", subtitle: "Gravel y MTB", enabled: false },
+  offroad: { label: "Offroad", subtitle: "Rutas 4x4 y brechas", enabled: true },
+};
+
+export const ENABLED_ACTIVITIES = (Object.keys(ACTIVITY) as Activity[]).filter((a) => ACTIVITY[a].enabled);
+
+export function isEnabledActivity(value: unknown): value is Activity {
+  return ENABLED_ACTIVITIES.includes(value as Activity);
+}
+
 export type RouteSummary = {
   id: string;
   slug: string;
+  activity: Activity;
   name: string;
   place_label: string;
   difficulty: Difficulty;
@@ -29,6 +45,7 @@ export const ROUTE_STATUS: Record<RouteStatus, { label: string; tone: "neutral" 
 
 /** Lo que se edita de una ruta (el formulario de subir y el de editar) */
 export type RouteFields = {
+  activity: Activity;
   name: string;
   place_label: string;
   difficulty: Difficulty;
@@ -39,7 +56,7 @@ export type RouteFields = {
   cover_url: string | null;
 };
 
-export const ROUTE_FIELDS_COLUMNS = "name, place_label, difficulty, route_type, duration_min, description, tags, cover_url";
+export const ROUTE_FIELDS_COLUMNS = "activity, name, place_label, difficulty, route_type, duration_min, description, tags, cover_url";
 
 export function toRouteFields(row: Omit<RouteFields, "description" | "tags"> & { description: string | null; tags: string[] }): RouteFields {
   return { ...row, description: row.description ?? "", tags: row.tags.join(", ") };

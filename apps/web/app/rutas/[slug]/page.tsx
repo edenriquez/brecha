@@ -14,7 +14,8 @@ import { RouteTrack } from "@/components/route-track";
 import { ShareButton } from "@/components/share-button";
 import { TopNav } from "@/components/top-nav";
 import { TrailConditions } from "@/components/trail-conditions";
-import { DIFFICULTY, formatDuration, formatKm, googleMapsDirections, ROUTE_TYPE } from "@/lib/routes";
+import { ACTIVITY_KEY } from "@/lib/route-filters";
+import { ACTIVITY, DIFFICULTY, formatDuration, formatKm, googleMapsDirections, ROUTE_TYPE } from "@/lib/routes";
 import { outingDateParts, spotsLabel, type OutingSummary } from "@/lib/outings";
 import { listUpcomingOutings } from "@/lib/outings.server";
 import { personName, profileHref } from "@/lib/profiles";
@@ -61,7 +62,7 @@ export default async function RoutePage({ params }: Props) {
       <TopNav />
       <main className="mx-auto w-full max-w-7xl flex-1 px-4 py-6 sm:px-6 lg:px-8">
         <nav aria-label="Ruta de navegación" className="mb-4 flex items-center gap-2 text-xs font-medium text-on-surface-variant">
-          <Link href="/" className="transition-colors hover:text-primary">
+          <Link href={route.activity === "hiking" ? "/" : `/?${ACTIVITY_KEY}=${route.activity}`} className="transition-colors hover:text-primary">
             Mapa
           </Link>
           <span className="text-outline-variant">/</span>
@@ -73,7 +74,8 @@ export default async function RoutePage({ params }: Props) {
         <section className="flex flex-col justify-between gap-4 pb-6 md:flex-row md:items-end">
           <div className="space-y-2">
             <h1 className="font-headline text-3xl font-extrabold tracking-tight sm:text-4xl">{route.name}</h1>
-            <p className="flex items-center gap-1.5 text-sm text-on-surface-variant">
+            <p className="flex flex-wrap items-center gap-1.5 text-sm text-on-surface-variant">
+              <span className="rounded-full bg-primary-fixed/60 px-2 py-0.5 text-[11px] font-semibold text-primary">{ACTIVITY[route.activity].label}</span>
               <MapPin className="size-4 text-outline" aria-hidden />
               {route.place_label}
             </p>
