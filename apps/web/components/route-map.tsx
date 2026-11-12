@@ -176,7 +176,9 @@ export function RouteMap({
       if (e.originalEvent) onUserMoveRef.current(viewArea(map));
     });
     mapRef.current = map;
+    // un mapa nuevo no ha encuadrado nada; pasa al volver a montarse con una ruta ya elegida
     framedKey.current = null;
+    framedSelection.current = null;
 
     const registry = markers.current;
     return () => {
@@ -248,15 +250,17 @@ export function RouteMap({
     if (styleLoaded.current) setTrack(map, track ?? []);
 
     const key = `${selectedId}:${track === undefined ? "cargando" : track ? "trazo" : "pin"}`;
-    // el mapa oculto (móvil, vista de lista) no se mueve
-    if (!selectedId || track === undefined || key === framedSelection.current || !map.getContainer().clientWidth) return;
+    if (!selectedId || track === undefined || key === framedSelection.current) return;
     framedSelection.current = key;
     if (!terrain3dRef.current && (map.getPitch() || map.getBearing())) map.jumpTo({ pitch: 0, bearing: 0 });
+    // con el mapa oculto (móvil, vista de lista) frame() lo deja pendiente hasta que se muestre
     if (track) {
-      map.fitBounds(lineBounds(track), { ...TRACK_FRAME, duration: 800 });
+      frame(map, { bounds: lineBounds(track), options: { ...TRACK_FRAME, duration: 800 } }, pendingFrame);
     } else {
       const pin = registry.get(selectedId)?.marker.getLngLat();
-      if (pin && !map.getBounds().contains(pin)) map.easeTo({ center: pin, duration: 600 });
+      if (!pin) return;
+      if (!map.getContainer().clientWidth) frame(map, { bounds: [pin, pin], options: { maxZoom: 12, duration: 0 } }, pendingFrame);
+      else if (!map.getBounds().contains(pin)) map.easeTo({ center: pin, duration: 600 });
     }
   }, [selectedId, track]);
 

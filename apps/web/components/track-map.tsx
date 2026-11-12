@@ -1,6 +1,8 @@
 "use client";
 
 import { useEffect, useRef } from "react";
+import { useRouter } from "next/navigation";
+import { OpenMapLink } from "@/components/open-map-link";
 import { addHillshade, collapseAttribution, lineBounds, MAP_STYLE, maplibregl, setSatellite, setTerrain3d, setTrack, TERRAIN_3D_PITCH, type LineCoords } from "@/lib/maplibre";
 import { OFFLINE_ZOOM, offlineBounds } from "@/lib/offline";
 
@@ -16,13 +18,31 @@ function labelMarker(text: string, dot: string) {
 /**
  * Mapa con el trazo de la ruta; `hover` es el punto que se señala desde el perfil de altitud.
  * `offline`: visor a pantalla completa de una ruta descargada, en satélite, con GPS y sin salir de la zona guardada.
+ * `openHref`: un clic en el mapa (sin arrastrar) lleva ahí, al mapa completo.
  */
-export function TrackMap({ line, hover, offline = false, terrain3d = false }: { line: LineCoords; hover: [number, number] | null; offline?: boolean; terrain3d?: boolean }) {
+export function TrackMap({
+  line,
+  hover,
+  offline = false,
+  terrain3d = false,
+  openHref,
+}: {
+  line: LineCoords;
+  hover: [number, number] | null;
+  offline?: boolean;
+  terrain3d?: boolean;
+  openHref?: string;
+}) {
+  const router = useRouter();
   const container = useRef<HTMLDivElement>(null);
   const mapRef = useRef<maplibregl.Map | null>(null);
   const styleLoaded = useRef(false);
   const hoverMarker = useRef<maplibregl.Marker | null>(null);
   const terrain3dRef = useRef(terrain3d);
+  const openHrefRef = useRef(openHref);
+  useEffect(() => {
+    openHrefRef.current = openHref;
+  }, [openHref]);
 
   useEffect(() => {
     if (!container.current || line.length < 2) return;
@@ -36,6 +56,11 @@ export function TrackMap({ line, hover, offline = false, terrain3d = false }: { 
       ...(offline && { maxBounds: offlineBounds(line), minZoom: OFFLINE_ZOOM.min, maxZoom: OFFLINE_ZOOM.max }),
     });
     map.addControl(new maplibregl.NavigationControl({ showCompass: offline }), "bottom-right");
+    // maplibre solo emite click si no hubo arrastre: mover el mapa no navega
+    map.on("click", () => {
+      if (openHrefRef.current) router.push(openHrefRef.current);
+    });
+    if (openHrefRef.current) map.getCanvas().style.cursor = "pointer";
     if (offline) {
       map.addControl(new maplibregl.GeolocateControl({ positionOptions: { enableHighAccuracy: true }, trackUserLocation: true, fitBoundsOptions: { maxZoom: 15 } }), "bottom-right");
     }
@@ -67,7 +92,7 @@ export function TrackMap({ line, hover, offline = false, terrain3d = false }: { 
       styleLoaded.current = false;
       map.remove();
     };
-  }, [line, offline]);
+  }, [line, offline, router]);
 
   useEffect(() => {
     terrain3dRef.current = terrain3d;
@@ -88,6 +113,7 @@ export function TrackMap({ line, hover, offline = false, terrain3d = false }: { 
   return (
     <div className="absolute inset-0">
       <div ref={container} className="h-full w-full" />
+      {openHref && <OpenMapLink href={openHref} />}
     </div>
   );
 }

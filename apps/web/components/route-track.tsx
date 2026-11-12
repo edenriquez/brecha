@@ -7,8 +7,11 @@ import { TrackMap } from "@/components/route-map-lazy";
 import type { ProfilePoint } from "@/lib/gpx";
 import type { LineCoords } from "@/lib/maplibre";
 
-/** Mapa del trazo y perfil de altitud enlazados: recorrer el perfil marca el punto en el mapa. */
-export function RouteTrack({ line, profile }: { line: LineCoords; profile: ProfilePoint[] | null }) {
+/**
+ * Mapa del trazo y perfil de altitud enlazados: recorrer el perfil marca el punto en el mapa.
+ * `mapHref`: solo para rutas publicadas, que son las que existen en el explorador.
+ */
+export function RouteTrack({ line, profile, mapHref }: { line: LineCoords; profile: ProfilePoint[] | null; mapHref?: string }) {
   const [active, setActive] = useState<number | null>(null);
   const point = active !== null && profile ? profile[active] : null;
   const eles = profile?.map((p) => p[1]);
@@ -16,7 +19,7 @@ export function RouteTrack({ line, profile }: { line: LineCoords; profile: Profi
   return (
     <div className="space-y-5">
       <div className="relative h-80 overflow-hidden rounded-xl border border-outline-variant/60 bg-[#e3e8e1] sm:h-[26rem]">
-        <TrackMap line={line} hover={point ? [point[2], point[3]] : null} />
+        <TrackMap line={line} hover={point ? [point[2], point[3]] : null} openHref={mapHref} />
       </div>
       {profile && eles && (
         <div>
