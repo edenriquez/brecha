@@ -34,21 +34,39 @@ const PEAKS: maplibregl.ExpressionSpecification = ["all", ["has", "name"], ["in"
 const CONTOUR_BROWN = "#6f4e37";
 
 // curvas de nivel generadas del mismo modelo de elevación que el sombreado
-let contourTiles: string | undefined;
-function contourUrl() {
-  if (!contourTiles) {
-    const dem = new mlcontour.DemSource({ url: DEM_TILES, encoding: "terrarium", maxzoom: 14 });
+const contourTiles = new Map<boolean, string>();
+// sin worker el modelo de elevación se pide desde la página y el service worker lo sirve sin red;
+// maplibre-contour le da a cada fuente su propio protocolo, así conviven las dos
+function contourUrl(worker: boolean) {
+  let url = contourTiles.get(worker);
+  if (!url) {
+    const dem = new mlcontour.DemSource({ url: DEM_TILES, encoding: "terrarium", maxzoom: 14, worker });
     dem.setupMaplibre(maplibregl);
-    contourTiles = dem.contourProtocolUrl({ thresholds: { 11: [100, 500], 13: [50, 200], 14: [20, 100] } });
+    url = dem.contourProtocolUrl({ thresholds: { 11: [100, 500], 13: [50, 200], 14: [20, 100] } });
+    contourTiles.set(worker, url);
   }
-  return contourTiles;
+  return url;
 }
 
-/** Curvas de nivel, veredas y nombres de cerros, pasos, refugios y áreas protegidas. Llamar después de addHillshade. */
-export function addTopoLayers(map: maplibregl.Map) {
+/** Grupos de addTopoLayers que se prenden y apagan juntos; las veredas van con los nombres. */
+const TOPO_GROUPS = {
+  contours: ["contour-lines", "contour-labels"],
+  names: ["trail-casing", "trail-paths", "trail-tracks", "park-names", "poi-names", "saddle-names", "peak-dots", "peak-names"],
+};
+export type TopoGroup = keyof typeof TOPO_GROUPS;
+
+export function setTopoGroup(map: maplibregl.Map, group: TopoGroup, visible: boolean) {
+  for (const id of TOPO_GROUPS[group]) if (map.getLayer(id)) map.setLayoutProperty(id, "visibility", visible ? "visible" : "none");
+}
+
+/**
+ * Curvas de nivel, veredas y nombres de cerros, pasos, refugios y áreas protegidas. Llamar después de addHillshade.
+ * `offline`: las curvas se calculan en la página para que funcionen sin red.
+ */
+export function addTopoLayers(map: maplibregl.Map, offline = false) {
   // encima del sombreado y del satélite, debajo de caminos, ruta y nombres
   const firstLabel = map.getStyle().layers?.find((l) => l.type === "symbol")?.id;
-  map.addSource("contours", { type: "vector", tiles: [contourUrl()], minzoom: 11, maxzoom: 14 });
+  map.addSource("contours", { type: "vector", tiles: [contourUrl(!offline)], minzoom: 11, maxzoom: 14 });
   const major: maplibregl.ExpressionSpecification = ["==", ["get", "level"], 1];
   map.addLayer({ id: "contour-lines", type: "line", source: "contours", "source-layer": "contours", paint: { "line-color": CONTOUR_BROWN, "line-opacity": ["case", major, 0.5, 0.3], "line-width": ["case", major, 1, 0.6] } }, firstLabel);
   const paths = (cls: string): maplibregl.ExpressionSpecification => ["==", ["get", "class"], cls];

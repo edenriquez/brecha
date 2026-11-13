@@ -6,12 +6,15 @@ const MAP_CACHE = "brecha-mapas";
 // estilo, TileJSON, fuentes y sprites del mapa base: se refrescan cada vez que hay red
 const STYLE_CACHE = "brecha-estilo";
 const ROUTES_CACHE = "brecha-rutas";
+// capas regionales del bucket `capas` de Supabase, completas: las sirve aunque se pidan por rangos (PMTiles)
+const LAYERS_CACHE = "brecha-capas";
+const LAYERS_PATH = "/storage/v1/object/public/capas/";
 // scripts y estilos de /_next/static/ que bajan al navegar; aparte para que la poda del shell no los borre
 const STATIC_CACHE = "brecha-estaticos";
 const STATIC_MAX = 60;
 const ROUTE_KEY = "/__descargas/";
 const OFFLINE_PAGE = "/descargas";
-// los de lib/map-sources.ts y lib/dem.ts
+// los de lib/map-sources.ts y lib/dem.ts; el bucket de capas se reconoce por LAYERS_PATH, sin importar el host
 const MAP_HOSTS = ["tiles.openfreemap.org", "server.arcgisonline.com", "s3.amazonaws.com"];
 const STYLE_TIMEOUT_MS = 4000;
 // sin señal, fetch no falla: se cuelga
@@ -43,6 +46,10 @@ self.addEventListener("fetch", (event) => {
     else if (STATIC_FILES.includes(url.pathname)) event.respondWith(cacheFirst(APP_CACHE, request));
     return;
   }
+  if (url.pathname.startsWith(LAYERS_PATH)) {
+    event.respondWith(layerFile(request));
+    return;
+  }
   if (!MAP_HOSTS.includes(url.hostname)) return;
   if (url.hostname === "s3.amazonaws.com" && !url.pathname.startsWith("/elevation-tiles-prod/")) return;
   event.respondWith(isTile(url) ? cacheFirst(MAP_CACHE, request, tileCacheKey(request.url)) : networkFirst(STYLE_CACHE, request));
@@ -64,6 +71,31 @@ function tileCacheKey(url) {
 async function cacheFirst(cacheName, request, key = request.url) {
   const cache = await caches.open(cacheName);
   return (await cache.match(key, { ignoreVary: true })) ?? fetchWithTimeout(request, TILE_TIMEOUT_MS);
+}
+
+/** Del cache si la descarga de una ruta lo guardó (con su rango, si lo pide); si no, de la red tal cual. */
+async function layerFile(request) {
+  const cached = await (await caches.open(LAYERS_CACHE)).match(request.url, { ignoreVary: true });
+  return cached ? byteRange(cached, request.headers.get("Range")) : fetch(request);
+}
+
+/** 206 con el trozo pedido de `response` (`bytes=a-b`, `bytes=a-` o `bytes=-n`); sin Range, la respuesta entera. */
+async function byteRange(response, range) {
+  const match = range && /^bytes=(\d*)-(\d*)$/.exec(range.trim());
+  if (!match || (!match[1] && !match[2])) return response;
+  const body = await response.blob();
+  const size = body.size;
+  const start = match[1] ? Number(match[1]) : Math.max(0, size - Number(match[2]));
+  const end = match[1] && match[2] ? Math.min(Number(match[2]), size - 1) : size - 1;
+  if (start >= size || start > end) return new Response(null, { status: 416, headers: { "Content-Range": `bytes */${size}` } });
+  return new Response(body.slice(start, end + 1), {
+    status: 206,
+    headers: {
+      "Content-Type": response.headers.get("Content-Type") ?? "application/octet-stream",
+      "Content-Length": String(end - start + 1),
+      "Content-Range": `bytes ${start}-${end}/${size}`,
+    },
+  });
 }
 
 /** Lee del shell y de lo ya visto; lo nuevo se guarda conservando las STATIC_MAX entradas más recientes. */

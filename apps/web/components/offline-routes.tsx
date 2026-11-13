@@ -4,10 +4,14 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import clsx from "clsx";
-import { ArrowLeft, ArrowUp, Check, Clock, CloudDownload, Mountain, Rotate3d, Smartphone, Trash2, TrendingDown, TrendingUp, TriangleAlert, Undo2, WifiOff, X } from "lucide-react";
+import { ArrowLeft, ArrowUp, Check, ChevronDown, ChevronUp, Clock, CloudDownload, Layers, LocateFixed, Mountain, Smartphone, Trash2, TriangleAlert, Undo2, WifiOff, X } from "lucide-react";
 import { ElevationProfile } from "@/components/elevation-profile";
+import { LayerSheet, loadLayers, REGIONAL, saveLayers, useOnline, type MapLayers, type Overlay } from "@/components/layer-sheet";
 // sin next/dynamic: así sus scripts vienen en el HTML que guarda el service worker y el mapa abre sin red
 import { routeCloses, TrackMap } from "@/components/track-map";
+import { setLidar, setWaterfalls } from "@/lib/lidar-layer";
+import { setSatellite, setTopoGroup, type maplibregl } from "@/lib/maplibre";
+import { setCamps, setRoads, setViewpoints } from "@/lib/terrain-layers";
 import {
   cancelDownload,
   deleteOfflineRoute,
@@ -18,6 +22,7 @@ import {
   offlineSupported,
   queueDownload,
   storageStatus,
+  touchesLayerZone,
   useDownloads,
   useIosSafariTab,
   type OfflineRoute,
@@ -237,9 +242,20 @@ function List() {
   );
 }
 
+// capas regionales: se crean al prenderlas la primera vez
+const REGIONAL_LAYERS = { roads: setRoads, waterfalls: setWaterfalls, viewpoints: setViewpoints, camps: setCamps };
+const ROUND = "pointer-events-auto relative flex size-12 items-center justify-center rounded-full shadow-lg ring-1 ring-outline-variant/60";
+
 function Viewer({ slug }: { slug: string }) {
   const [route, setRoute] = useState<OfflineRoute | null | undefined>(undefined);
-  const [terrain3d, setTerrain3d] = useState(true);
+  const [layers, setLayers] = useState(loadLayers);
+  const [ready, setReady] = useState<{ map: maplibregl.Map; locate: () => void } | null>(null);
+  const [tracking, setTracking] = useState(false);
+  // la hoja de capas y el panel de avance nunca a la vez
+  const [open, setOpen] = useState<"capas" | "avance" | null>(null);
+  const [zone, setZone] = useState(false);
+  const [lidarFailed, setLidarFailed] = useState(false);
+  const online = useOnline();
   const [active, setActive] = useState<number | null>(null);
   const [back, setBack] = useState(false);
   const [progress, setProgress] = useState<(ReturnType<typeof trackProgress> & { accuracy: number }) | null>(null);
@@ -247,10 +263,38 @@ function Viewer({ slug }: { slug: string }) {
   // con menos de 2 puntos no hay perfil que recorrer
   const routeProfile = route?.profile && route.profile.length >= 2 ? route.profile : null;
   const reversed = useMemo(() => routeProfile && reverseProfile(routeProfile), [routeProfile]);
+  const map = ready?.map;
+  // el relieve LiDAR no se guarda con la ruta: sin señal se queda el satélite
+  const lidar = zone && online && !lidarFailed;
+  const base = layers.base === "lidar" && !lidar ? "satellite" : layers.base;
+  const overlays = layers.overlays.filter((o) => zone || !REGIONAL.includes(o));
 
   useEffect(() => {
     (offlineSupported() ? getOfflineRoute(slug) : Promise.resolve(null)).then(setRoute);
   }, [slug]);
+
+  useEffect(() => {
+    if (route) (route.layers ? Promise.resolve(true) : touchesLayerZone(route.line)).then(setZone);
+  }, [route]);
+
+  useEffect(() => {
+    if (!map) return;
+    setSatellite(map, base === "satellite");
+    setTopoGroup(map, "contours", overlays.includes("contours"));
+    setTopoGroup(map, "names", overlays.includes("names"));
+    for (const [id, set] of Object.entries(REGIONAL_LAYERS)) set(map, overlays.includes(id as Overlay)).catch((e) => console.error(`capa ${id}:`, e));
+    setLidar(map, base === "lidar").catch(() => setLidarFailed(true));
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- overlays es un arreglo nuevo en cada render; su contenido va en la llave
+  }, [map, base, overlays.join()]);
+
+  useEffect(() => {
+    if (!map || open !== "capas") return;
+    const close = () => setOpen(null);
+    map.on("click", close);
+    return () => {
+      map.off("click", close);
+    };
+  }, [map, open]);
 
   if (route === undefined) return <div className="h-dvh bg-[#e3e8e1]" />;
   if (!route) {
@@ -271,81 +315,45 @@ function Viewer({ slug }: { slug: string }) {
     const p = inReverse ? reversed : routeProfile;
     return p ? { ...trackProgress(p, { lng: fix.lngLat[0], lat: fix.lngLat[1] }, last), accuracy: fix.accuracy } : null;
   }
+  function changeLayers(next: MapLayers) {
+    setLayers(next);
+    saveLayers(next);
+  }
   const offM = progress && progress.offM > 50 && progress.offM > progress.accuracy ? progress.offM : null;
+  const figures = progress && [
+    [back ? "Regresado" : "Recorrido", formatKm(progress.doneKm), "text-on-surface"],
+    ["Falta", formatKm(progress.leftKm), "text-secondary"],
+    ["Por subir", `${Math.round(progress.climbM).toLocaleString("es-MX")} m`, "text-on-surface"],
+  ];
+  const expanded = open === "avance";
   return (
     <div className="fixed inset-0 bg-[#e3e8e1]">
       <TrackMap
         line={route.line}
         hover={point ? [point[2], point[3]] : null}
         offline
-        terrain3d={terrain3d}
+        terrain3d={layers.terrain3d}
         reversed={back}
+        onReady={setReady}
+        onTracking={setTracking}
         onPosition={(lngLat, accuracy) => {
           gps.current = { lngLat, accuracy };
           setProgress((prev) => locate(gps.current!, back, prev?.index ?? null));
         }}
       />
-      <div className="pointer-events-none absolute inset-x-0 top-0 flex flex-wrap items-start gap-2 p-3 pt-[max(0.75rem,env(safe-area-inset-top))]">
-        <a
-          href="/descargas"
-          aria-label="Rutas sin conexión"
-          className="pointer-events-auto flex size-10 shrink-0 items-center justify-center rounded-full bg-surface-container-lowest shadow-lg ring-1 ring-outline-variant/60"
-        >
-          <ArrowLeft className="size-5" aria-hidden />
-        </a>
-        <div className="pointer-events-auto min-w-0 flex-1 rounded-2xl bg-surface-container-lowest/95 px-3 py-2 shadow-lg ring-1 ring-outline-variant/60">
-          <p className="truncate font-headline text-sm font-bold">{route.name}</p>
-          <p className="flex gap-3 font-mono text-[11px] text-on-surface-variant">
-            {back && <span>Regreso</span>}
-            <span>{formatKm(route.distance_km)}</span>
-            <span className="flex items-center gap-0.5">
-              {/* de regreso se baja lo que la ida sube */}
-              {back ? <TrendingDown className="size-3" aria-hidden /> : <TrendingUp className="size-3" aria-hidden />}
-              {route.elevation_gain_m.toLocaleString("es-MX")} m
-            </span>
-            {!back && <span>{formatDuration(route.duration_min)}</span>}
+      {/* a la derecha queda la atribución del mapa */}
+      <div className="pointer-events-none absolute inset-x-0 top-0 flex flex-col items-start gap-2 p-3 pt-[max(0.75rem,env(safe-area-inset-top))] pr-12">
+        <div className="flex max-w-full items-center gap-2">
+          <a href="/descargas" aria-label="Rutas sin conexión" className={clsx(ROUND, "shrink-0 bg-surface-container-lowest")}>
+            <ArrowLeft className="size-5" aria-hidden />
+          </a>
+          <p className="pointer-events-auto flex min-w-0 items-center gap-2 rounded-full bg-surface-container-lowest px-4 py-3 font-headline text-sm font-bold shadow-lg ring-1 ring-outline-variant/60">
+            <Mountain className="size-4 shrink-0 text-primary" aria-hidden />
+            <span className="truncate">{route.name}</span>
           </p>
         </div>
-        <button
-          type="button"
-          aria-pressed={terrain3d}
-          onClick={() => setTerrain3d((on) => !on)}
-          className={clsx(
-            "pointer-events-auto flex h-10 shrink-0 items-center gap-1.5 rounded-full px-3.5 font-headline text-sm font-semibold shadow-lg ring-1",
-            terrain3d ? "bg-primary text-on-primary ring-primary" : "bg-surface-container-lowest text-on-surface ring-outline-variant/60",
-          )}
-        >
-          <Rotate3d className="size-4" aria-hidden />
-          3D
-        </button>
-        {routeProfile && !routeCloses(route.line) && (
-          <div className="basis-full">
-            <div className="pointer-events-auto inline-flex rounded-full bg-surface-container-lowest/95 p-1 shadow-lg ring-1 ring-outline-variant/60">
-              {[false, true].map((mode) => (
-                <button
-                  key={String(mode)}
-                  type="button"
-                  aria-pressed={back === mode}
-                  onClick={() => {
-                    if (back === mode) return;
-                    setBack(mode);
-                    setActive(null);
-                    setProgress(gps.current && locate(gps.current, mode, null));
-                  }}
-                  className={clsx(
-                    "flex items-center gap-1.5 rounded-full px-3.5 py-1.5 font-headline text-sm font-semibold",
-                    back === mode ? "bg-primary text-on-primary" : "text-on-surface-variant",
-                  )}
-                >
-                  {mode && <Undo2 className="size-4" aria-hidden />}
-                  {mode ? "De regreso" : "Ida"}
-                </button>
-              ))}
-            </div>
-          </div>
-        )}
         {offM !== null && (
-          <div role="alert" className="pointer-events-auto flex basis-full items-center gap-3 rounded-2xl bg-secondary-fixed px-3 py-2 text-on-secondary-container shadow-lg ring-1 ring-secondary-container/40">
+          <div role="alert" className="pointer-events-auto flex items-center gap-3 rounded-2xl bg-secondary-fixed px-3 py-2 text-on-secondary-container shadow-lg ring-1 ring-secondary-container/40">
             <TriangleAlert className="size-5 shrink-0 text-secondary" aria-hidden />
             <div>
               <p className="font-headline text-sm font-bold">Estás a {offM < 1000 ? `${Math.round(offM)} m` : formatKm(offM / 1000)} del sendero</p>
@@ -354,35 +362,122 @@ function Viewer({ slug }: { slug: string }) {
           </div>
         )}
       </div>
-      {profile && (
-        // a la izquierda de los controles del mapa (zoom, brújula, GPS)
-        <div className="absolute bottom-3 left-3 right-14 mb-[env(safe-area-inset-bottom)] rounded-2xl bg-surface-container-lowest/95 p-3 shadow-lg ring-1 ring-outline-variant/60">
-          {progress ? (
-            <>
-              <div className="grid grid-cols-3 divide-x divide-outline-variant/60 text-center">
-                {[
-                  [back ? "Regresado" : "Recorrido", formatKm(progress.doneKm), "text-on-surface"],
-                  ["Falta", formatKm(progress.leftKm), "text-secondary"],
-                  ["Por subir", `${Math.round(progress.climbM).toLocaleString("es-MX")} m`, "text-on-surface"],
-                ].map(([label, value, color], i) => (
-                  <div key={label}>
-                    <p className="font-mono text-[10px] tracking-wider text-on-surface-variant uppercase">{label}</p>
-                    <p className={clsx("flex items-center justify-center gap-0.5 font-headline text-lg font-bold", color)}>
-                      {i === 2 && <ArrowUp className="size-4" aria-hidden />}
-                      {value}
-                    </p>
-                  </div>
-                ))}
-              </div>
-              <p className="my-2 flex items-center justify-center gap-1 border-b border-outline-variant/60 pb-2 font-mono text-[11px] text-on-surface-variant">
-                <Clock className="size-3" aria-hidden />≈ {formatDuration(progress.minutes)} para {back ? "volver al inicio" : "llegar al final"}
-              </p>
-            </>
-          ) : (
-            <p className="mb-2 text-center font-mono text-[11px] text-on-surface-variant">Activa tu ubicación en el mapa para ver tu avance</p>
+
+      <div className="absolute top-1/2 right-3 flex -translate-y-1/2 flex-col gap-3">
+        <button
+          type="button"
+          aria-label={overlays.length ? `Capas del mapa (${overlays.length} prendidas)` : "Capas del mapa"}
+          aria-expanded={open === "capas"}
+          onClick={() => setOpen(open === "capas" ? null : "capas")}
+          className={clsx(ROUND, "bg-surface-container-lowest text-on-surface")}
+        >
+          <Layers className="size-6" aria-hidden />
+          {overlays.length > 0 && (
+            <span className="absolute -top-1 -right-1 flex size-5 items-center justify-center rounded-full bg-primary font-mono text-[11px] font-bold text-on-primary ring-2 ring-surface-container-lowest">
+              {overlays.length}
+            </span>
           )}
-          <ElevationProfile profile={profile} active={active} onActive={setActive} overlay position={progress?.index ?? null} />
+        </button>
+        <button
+          type="button"
+          aria-label="Seguir mi ubicación"
+          aria-pressed={tracking}
+          disabled={!ready}
+          onClick={() => ready?.locate()}
+          className={clsx(ROUND, tracking ? "bg-primary text-on-primary" : "bg-surface-container-lowest text-on-surface")}
+        >
+          <LocateFixed className="size-6" aria-hidden />
+        </button>
+      </div>
+
+      {profile && open !== "capas" && (
+        <div className="absolute inset-x-3 bottom-3 mb-[env(safe-area-inset-bottom)] rounded-2xl bg-surface-container-lowest shadow-lg ring-1 ring-outline-variant/60">
+          {expanded ? (
+            <div className="p-3">
+              <div className="mb-2 flex items-center gap-2">
+                {!routeCloses(route.line) && (
+                  <div className="inline-flex rounded-full bg-surface-container p-1">
+                    {[false, true].map((mode) => (
+                      <button
+                        key={String(mode)}
+                        type="button"
+                        aria-pressed={back === mode}
+                        onClick={() => {
+                          if (back === mode) return;
+                          setBack(mode);
+                          setActive(null);
+                          setProgress(gps.current && locate(gps.current, mode, null));
+                        }}
+                        className={clsx(
+                          "flex items-center gap-1.5 rounded-full px-3.5 py-1.5 font-headline text-sm font-semibold",
+                          back === mode ? "bg-primary text-on-primary" : "text-on-surface-variant",
+                        )}
+                      >
+                        {mode && <Undo2 className="size-4" aria-hidden />}
+                        {mode ? "De regreso" : "Ida"}
+                      </button>
+                    ))}
+                  </div>
+                )}
+                <button type="button" onClick={() => setOpen(null)} aria-expanded aria-label="Plegar el avance" className="ml-auto rounded-full p-2 text-on-surface-variant hover:bg-surface-container">
+                  <ChevronDown className="size-5" aria-hidden />
+                </button>
+              </div>
+              {figures && progress ? (
+                <>
+                  <div className="grid grid-cols-3 divide-x divide-outline-variant/60 text-center">
+                    {figures.map(([label, value, color], i) => (
+                      <div key={label}>
+                        <p className="font-mono text-[10px] tracking-wider text-on-surface-variant uppercase">{label}</p>
+                        <p className={clsx("flex items-center justify-center gap-0.5 font-headline text-lg font-bold", color)}>
+                          {i === 2 && <ArrowUp className="size-4" aria-hidden />}
+                          {value}
+                        </p>
+                      </div>
+                    ))}
+                  </div>
+                  <p className="my-2 flex items-center justify-center gap-1 border-b border-outline-variant/60 pb-2 font-mono text-[11px] text-on-surface-variant">
+                    <Clock className="size-3" aria-hidden />≈ {formatDuration(progress.minutes)} para {back ? "volver al inicio" : "llegar al final"}
+                  </p>
+                </>
+              ) : (
+                <p className="mb-2 text-center font-mono text-[11px] text-on-surface-variant">Activa tu ubicación para ver tu avance</p>
+              )}
+              <ElevationProfile profile={profile} active={active} onActive={setActive} overlay position={progress?.index ?? null} />
+            </div>
+          ) : (
+            <button type="button" aria-expanded={false} onClick={() => setOpen("avance")} className="flex w-full items-center gap-2 px-3 py-2.5 text-left">
+              {figures ? (
+                <span className="grid flex-1 grid-cols-3 divide-x divide-outline-variant/60">
+                  {figures.map(([label, value, color], i) => (
+                    <span key={label} className="px-2 first:pl-1">
+                      <span className="block font-mono text-[10px] tracking-wider text-on-surface-variant uppercase">{label}</span>
+                      <span className={clsx("flex items-center gap-0.5 font-headline font-bold", color)}>
+                        {i === 2 && <ArrowUp className="size-3.5" aria-hidden />}
+                        {value}
+                      </span>
+                    </span>
+                  ))}
+                </span>
+              ) : (
+                <span className="flex-1 py-1.5 text-sm text-on-surface-variant">Activa tu ubicación para ver tu avance</span>
+              )}
+              <ChevronUp className="size-5 shrink-0 text-on-surface-variant" aria-hidden />
+            </button>
+          )}
         </div>
+      )}
+
+      {open === "capas" && (
+        <LayerSheet
+          layers={{ ...layers, base }}
+          onChange={changeLayers}
+          zone={zone}
+          lidar={lidar}
+          // fuera de la zona no hay capas que bajar: lo que ofrece la hoja ya va con la ruta
+          saved={!zone || !!route.layers}
+          onClose={() => setOpen(null)}
+        />
       )}
     </div>
   );

@@ -9,11 +9,33 @@ import type { RouteSummary } from "@/lib/routes";
 const MAP_CACHE = "brecha-mapas";
 const STYLE_CACHE = "brecha-estilo";
 const ROUTES_CACHE = "brecha-rutas";
+// capas regionales (caminos, cauces, miradores, acampar): archivos completos, compartidos entre rutas
+const LAYERS_CACHE = "brecha-capas";
 const ROUTE_KEY = "/__descargas/";
 // portada de cada ruta, en el mismo cache pero fuera de las llaves que lee el service worker
 const COVER_KEY = "/__portadas/";
 
 type LineCoords = [number, number][];
+
+// igual que BASE en lib/lidar-layer.ts (aquí sin maplibre)
+const LAYERS_BASE = `${process.env.NEXT_PUBLIC_SUPABASE_URL}/storage/v1/object/public/capas/lidar-izta`;
+// los que pide el visor; el relieve LiDAR (66 MB) no se guarda
+const LAYER_FILES = ["capa.json", "brechas.pmtiles", "cauces.pmtiles", "zonas_volcanes.pmtiles", "miradores.geojson", "campamento.geojson", "cascadas.geojson"];
+const LAYERS_MB = 3.3;
+
+/** Si el trazo toca la zona analizada (los `bounds` de capa.json); false si no se pudo leer. */
+export async function touchesLayerZone(line: LineCoords, signal?: AbortSignal) {
+  try {
+    const { bounds } = await getJson<{ bounds: [number, number, number, number] }>(`${LAYERS_BASE}/capa.json`, signal);
+    const [w, s, e, n] = bounds;
+    const lngs = line.map((p) => p[0]);
+    const lats = line.map((p) => p[1]);
+    return Math.min(...lngs) <= e && Math.max(...lngs) >= w && Math.min(...lats) <= n && Math.max(...lats) >= s;
+  } catch {
+    if (signal?.aborted) throw signal.reason;
+    return false;
+  }
+}
 
 export type OfflineRouteInfo = Pick<RouteSummary, "slug" | "name" | "place_label" | "difficulty" | "distance_km" | "elevation_gain_m" | "duration_min" | "cover_url">;
 
@@ -26,6 +48,8 @@ export type OfflineRoute = OfflineRouteInfo & {
   savedAt: string;
   /** false mientras baja o si se cortó; los registros viejos no lo traen y cuentan como completos */
   complete?: boolean;
+  /** true si al terminar quedaron guardadas las capas regionales (la ruta toca su zona) */
+  layers?: boolean;
 };
 
 /** El visor sin conexión no deja alejarse ni acercarse más allá de lo descargado. */
@@ -129,13 +153,13 @@ export function tileCacheKey(url: string) {
   return url.replace(/(tiles\.openfreemap\.org\/planet)\/[^/]+(\/\d+\/\d+\/\d+\.pbf)$/, "$1$2");
 }
 
-/** Cuántas teselas y megas ocuparía la ruta, sin pedir nada a la red. */
-export function estimateDownload(line: LineCoords) {
+/** Cuántas teselas y megas ocuparía la ruta, sin pedir nada a la red; `layers` suma las capas regionales. */
+export function estimateDownload(line: LineCoords, layers = false) {
   const satellite = corridorTiles(line, SATELLITE_ZOOMS).length;
   const dem = corridorTiles(line, DEM_ZOOMS).length;
   const vector = corridorTiles(line, [SATELLITE_ZOOMS[0], VECTOR_MAX_ZOOM]).length;
   const kb = satellite * KB_PER_TILE.satellite + dem * KB_PER_TILE.dem + vector * KB_PER_TILE.vector;
-  return { tiles: satellite + dem + vector, mb: kb / 1024 };
+  return { tiles: satellite + dem + vector, mb: kb / 1024 + (layers ? LAYERS_MB : 0) };
 }
 
 type StyleJson = {
@@ -145,7 +169,7 @@ type StyleJson = {
   layers: { layout?: Record<string, unknown> }[];
 };
 
-async function getJson<T>(url: string, signal: AbortSignal): Promise<T> {
+async function getJson<T>(url: string, signal?: AbortSignal): Promise<T> {
   const res = await fetch(url, { signal });
   if (!res.ok) throw new Error(`${url}: ${res.status}`);
   return res.json();
@@ -223,7 +247,7 @@ export async function downloadRoute(
 ): Promise<OfflineRoute> {
   // sin esto el navegador puede borrar el cache cuando le falta espacio
   await navigator.storage?.persist?.().catch(() => false);
-  const style = await styleResources(signal);
+  const [style, layers] = await Promise.all([styleResources(signal), touchesLayerZone(line, signal)]);
   const tileTemplates = [
     { template: SATELLITE_TILES, zooms: SATELLITE_ZOOMS },
     { template: DEM_TILES, zooms: DEM_ZOOMS },
@@ -241,12 +265,18 @@ export async function downloadRoute(
   const record: OfflineRoute = { ...route, line, profile, tiles: tiles.map(tileCacheKey), bytes, savedAt: new Date().toISOString(), complete: false };
   await saveRecord(record);
   const storage = await navigator.storage?.estimate?.().catch(() => undefined);
-  if (storage?.quota !== undefined && storage.usage !== undefined && storage.quota - storage.usage < estimateDownload(line).mb * 1024 * 1024) {
+  if (storage?.quota !== undefined && storage.usage !== undefined && storage.quota - storage.usage < estimateDownload(line, layers).mb * 1024 * 1024) {
     throw new Error("No hay espacio suficiente en el dispositivo");
   }
 
-  const [mapCache, styleCache] = await Promise.all([caches.open(MAP_CACHE), caches.open(STYLE_CACHE)]);
-  const jobs = [...style.urls.map((url) => ({ url, cache: styleCache, key: url })), ...tiles.map((url) => ({ url, cache: mapCache, key: tileCacheKey(url) }))];
+  const [mapCache, styleCache, layersCache] = await Promise.all([caches.open(MAP_CACHE), caches.open(STYLE_CACHE), caches.open(LAYERS_CACHE)]);
+  // las capas se vuelven a bajar en cada descarga (son pocos megas): así se actualizan
+  const layerUrls = layers ? LAYER_FILES.map((f) => `${LAYERS_BASE}/${f}`) : [];
+  const jobs = [
+    ...style.urls.map((url) => ({ url, cache: styleCache, key: url })),
+    ...layerUrls.map((url) => ({ url, cache: layersCache, key: url })),
+    ...tiles.map((url) => ({ url, cache: mapCache, key: tileCacheKey(url) })),
+  ];
   let done = 0;
   let next = 0;
   let failed = false;
@@ -276,7 +306,7 @@ export async function downloadRoute(
     await saveRecord({ ...record, bytes });
     throw e;
   }
-  const saved: OfflineRoute = { ...record, bytes, complete: true };
+  const saved: OfflineRoute = { ...record, bytes, complete: true, ...(layers && { layers: true }) };
   await saveRecord(saved);
   await cacheOfflineShell();
   return saved;
@@ -286,9 +316,11 @@ export async function deleteOfflineRoute(slug: string) {
   const routes = await listOfflineRoutes();
   const target = routes.find((r) => r.slug === slug);
   if (!target) return;
-  const kept = new Set(routes.filter((r) => r.slug !== slug).flatMap((r) => r.tiles));
+  const others = routes.filter((r) => r.slug !== slug);
+  const kept = new Set(others.flatMap((r) => r.tiles));
   const mapCache = await caches.open(MAP_CACHE);
   await Promise.all(target.tiles.filter((t) => !kept.has(t)).map((t) => mapCache.delete(t)));
+  if (!others.some((r) => r.layers)) await caches.delete(LAYERS_CACHE);
   const cache = await routesCache();
   await Promise.all([cache.delete(ROUTE_KEY + encodeURIComponent(slug)), cache.delete(COVER_KEY + encodeURIComponent(slug))]);
   setDownload(slug, null);
