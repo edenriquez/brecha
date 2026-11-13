@@ -24,11 +24,15 @@ export function trackProgress(profile: ProfilePoint[], pos: { lng: number; lat: 
   const min = Math.min(...dists);
   const near = dists.flatMap((d, i) => (d <= min + 30 ? [i] : []));
   const ahead = last === null ? [] : near.filter((i) => i >= last);
-  // sin lectura anterior o si retrocedió: el menor; si no, el más cercano en los próximos 300 m
   const soon = ahead.filter((i) => profile[i][0] - profile[last!][0] <= 0.3);
-  // nada cerca adelante: a menos de 100 m de `last` es ruido y se queda; más lejos, hueco de GPS y toma el primero adelante
-  const gap = () => (dists[last!] < 100 ? last! : ahead[0]);
-  const index = !ahead.length ? near[0] : soon.length ? soon.reduce((a, b) => (dists[b] < dists[a] ? b : a)) : gap();
+  // a menos de 100 m de `last` es ruido del GPS: se queda ahí
+  const stay = last !== null && dists[last] < 100;
+  let index: number;
+  if (last === null) index = near[0];
+  else if (soon.length) index = soon.reduce((a, b) => (dists[b] < dists[a] ? b : a)); // el más cercano en los próximos 300 m
+  else if (stay) index = last;
+  else if (ahead.length) index = ahead[0]; // hueco de GPS: el primero adelante
+  else index = near[near.length - 1]; // retrocedió de verdad: el más cercano hacia atrás
   // al tramo y no al punto: entre puntos del perfil puede haber más de 50 m
   let offM = min;
   for (let i = 1; i < profile.length; i++) offM = Math.min(offM, segmentM(pos, profile[i - 1], profile[i]));
