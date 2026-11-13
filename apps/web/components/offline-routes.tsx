@@ -257,6 +257,8 @@ function Viewer({ slug }: { slug: string }) {
   const [tracking, setTracking] = useState(false);
   // la hoja de capas y el panel de avance nunca a la vez
   const [open, setOpen] = useState<"capas" | "avance" | null>(null);
+  // aviso de fuera del sendero reducido a su ícono; vuelve a salir completo si regresas al sendero y te sales otra vez
+  const [offHidden, setOffHidden] = useState(false);
   // los `bounds` de capa.json si la ruta toca la zona de las capas regionales
   const [layerBounds, setLayerBounds] = useState<Awaited<ReturnType<typeof layerZone>>>(null);
   // lo que pidió la descarga lanzada desde la hoja de capas, para marcar sus filas mientras baja
@@ -383,6 +385,8 @@ function Viewer({ slug }: { slug: string }) {
   // sin recorrido comenzado el GPS solo pinta el punto en el mapa
   const going = startedAt ? progress : null;
   const offM = going && going.offM > 50 && going.offM > going.accuracy ? going.offM : null;
+  if (offM === null && offHidden) setOffHidden(false);
+  const offText = offM === null ? "" : `Estás a ${offM < 1000 ? `${Math.round(offM)} m` : formatKm(offM / 1000)} del sendero`;
   const figures = going && [
     [back ? "Regresado" : "Recorrido", ...formatKm(going.doneKm).split(" "), "text-on-surface"],
     ["Falta", ...formatKm(going.leftKm).split(" "), "text-secondary"],
@@ -420,15 +424,31 @@ function Viewer({ slug }: { slug: string }) {
             <span className="truncate">{route.name}</span>
           </p>
         </div>
-        {offM !== null && (
-          <div role="alert" className="pointer-events-auto flex items-center gap-3 rounded-2xl bg-secondary-fixed px-3 py-2 text-on-secondary-container shadow-lg ring-1 ring-secondary-container/40">
-            <TriangleAlert className="size-5 shrink-0 text-secondary" aria-hidden />
-            <div>
-              <p className="font-headline text-sm font-bold">Estás a {offM < 1000 ? `${Math.round(offM)} m` : formatKm(offM / 1000)} del sendero</p>
-              <p className="text-sm">Regresa hacia la línea naranja.</p>
-            </div>
-          </div>
-        )}
+        {offM !== null &&
+          (offHidden ? (
+            <button
+              type="button"
+              onClick={() => setOffHidden(false)}
+              aria-label={`${offText}. Ver aviso`}
+              className="pointer-events-auto flex size-10 items-center justify-center rounded-full bg-secondary-fixed text-secondary shadow-lg ring-1 ring-secondary-container/40"
+            >
+              <TriangleAlert className="size-5" aria-hidden />
+            </button>
+          ) : (
+            <button
+              type="button"
+              role="alert"
+              onClick={() => setOffHidden(true)}
+              className="pointer-events-auto flex items-center gap-3 rounded-2xl bg-secondary-fixed px-3 py-2 text-left text-on-secondary-container shadow-lg ring-1 ring-secondary-container/40"
+            >
+              <TriangleAlert className="size-5 shrink-0 text-secondary" aria-hidden />
+              <span className="flex-1">
+                <span className="block font-headline text-sm font-bold">{offText}</span>
+                <span className="block text-sm">Regresa hacia la línea naranja.</span>
+              </span>
+              <X className="size-4 shrink-0" aria-hidden />
+            </button>
+          ))}
         {open === "capas" && coverage && (
           <p className="pointer-events-auto flex items-center gap-3 rounded-full bg-surface-container-lowest/95 px-3 py-1.5 text-xs shadow-lg ring-1 ring-outline-variant/60">
             <span className="flex items-center gap-1">
