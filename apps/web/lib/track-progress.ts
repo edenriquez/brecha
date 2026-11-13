@@ -47,3 +47,26 @@ export function trackProgress(profile: ProfilePoint[], pos: { lng: number; lat: 
   const leftKm = profile[profile.length - 1][0] - doneKm;
   return { index, offM, doneKm, leftKm, climbM, minutes: estimateDurationMin(leftKm, climbM, lossM) };
 }
+
+export type Trip = { startedAt: number; back: boolean; index: number | null };
+
+const TRIP_KEY = "brecha:recorrido:";
+
+/** Recorrido en curso de una ruta, guardado en el dispositivo: sigue ahí si el teléfono cierra la app. A las 24 h se da por abandonado. */
+export function loadTrip(slug: string): Trip | null {
+  try {
+    const trip: Trip | null = JSON.parse(localStorage.getItem(TRIP_KEY + slug) ?? "null");
+    return trip && Date.now() - trip.startedAt < 24 * 3_600_000 ? trip : null;
+  } catch {
+    return null;
+  }
+}
+
+export function saveTrip(slug: string, trip: Trip | null) {
+  try {
+    if (trip) localStorage.setItem(TRIP_KEY + slug, JSON.stringify(trip));
+    else localStorage.removeItem(TRIP_KEY + slug);
+  } catch {
+    // sin almacenamiento: el recorrido dura lo que la página
+  }
+}

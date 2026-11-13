@@ -27,9 +27,9 @@ export function ElevationProfile({
   profile: ProfilePoint[];
   active: number | null;
   onActive: (index: number | null) => void;
-  /** Encima del mapa del recorrido: más bajo, y el punto solo se mueve arrastrando (no al pasar el cursor) */
+  /** Encima del mapa del recorrido: más bajo, sin escala de altitud (la del punto va bajo la gráfica), y el punto solo se mueve arrastrando (no al pasar el cursor) */
   overlay?: boolean;
-  /** Índice donde va el GPS: punto azul con línea punteada */
+  /** Índice donde va el GPS: punto azul con línea punteada y la etiqueta "Posición actual" */
   position?: number | null;
 }) {
   const gradient = useId();
@@ -75,11 +75,14 @@ export function ElevationProfile({
   }
 
   const point = active === null ? null : profile[active];
+  const here = position == null ? null : profile[position];
+  // en el visor: la altitud del punto que arrastras o, si no, la de donde vas
+  const reading = overlay ? (point ? `km ${km(point[0])} · ${meters(point[1])}` : here && meters(here[1])) : null;
   const pct = (v: number, of: number) => `${(v / of) * 100}%`;
 
   return (
     <div className="flex gap-2 select-none">
-      <div className="relative w-12 shrink-0 text-right font-mono text-[10px] text-outline" aria-hidden>
+      <div hidden={overlay} className="relative w-12 shrink-0 text-right font-mono text-[10px] text-outline" aria-hidden>
         {chart.yTicks.map((e) => (
           <span key={e} className="absolute right-0 -translate-y-1/2" style={{ top: pct(chart.y(e), H) }}>
             {e.toLocaleString("es-MX")}
@@ -106,7 +109,8 @@ export function ElevationProfile({
           onBlur={() => !overlay && onActive(null)}
           className={clsx(
             "relative rounded-lg outline-none focus-visible:ring-2 focus-visible:ring-primary/40",
-            overlay ? "h-16 cursor-ew-resize touch-none sm:h-20" : "h-40 cursor-crosshair touch-pan-y sm:h-48",
+            // arriba queda el hueco para la etiqueta de la posición
+            overlay ? "mt-6 h-20 cursor-ew-resize touch-none" : "h-40 cursor-crosshair touch-pan-y sm:h-48",
           )}
         >
           <svg viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none" className="absolute inset-0 h-full w-full overflow-visible" aria-hidden>
@@ -138,23 +142,33 @@ export function ElevationProfile({
               </div>
             </>
           )}
-          {position != null && (
+          {here && (
             <>
-              <div className="pointer-events-none absolute inset-y-0 -translate-x-1/2 border-l-2 border-dotted border-[#1da1f2]" style={{ left: pct(chart.x(profile[position][0]), W) }} />
+              <div className="pointer-events-none absolute bottom-0 -translate-x-1/2 border-l-2 border-dotted border-[#1da1f2]" style={{ left: pct(chart.x(here[0]), W), top: pct(chart.y(here[1]), H) }} />
               <div
                 className="pointer-events-none absolute size-3 -translate-x-1/2 -translate-y-1/2 rounded-full border-2 border-white bg-[#1da1f2] shadow"
-                style={{ left: pct(chart.x(profile[position][0]), W), top: pct(chart.y(profile[position][1]), H) }}
+                style={{ left: pct(chart.x(here[0]), W), top: pct(chart.y(here[1]), H) }}
               />
+              <div
+                className="pointer-events-none absolute -translate-x-1/2 rounded bg-on-surface/85 px-1.5 py-0.5 font-mono text-[9px] tracking-wider whitespace-nowrap text-surface uppercase"
+                style={{ left: `clamp(3rem, ${pct(chart.x(here[0]), W)}, calc(100% - 3rem))`, bottom: `calc(${pct(H - chart.y(here[1]), H)} + 0.75rem)` }}
+              >
+                Posición actual
+              </div>
             </>
           )}
         </div>
         <div className="relative mt-1 h-4 font-mono text-[10px] text-outline" aria-hidden>
           <span className="absolute left-0">0 km</span>
-          {chart.xTicks.map((d) => (
-            <span key={d} className="absolute -translate-x-1/2" style={{ left: pct(d, total) }}>
-              {km(d)}
-            </span>
-          ))}
+          {reading ? (
+            <span className="absolute left-1/2 -translate-x-1/2 text-on-surface">{reading}</span>
+          ) : (
+            chart.xTicks.map((d) => (
+              <span key={d} className="absolute -translate-x-1/2" style={{ left: pct(d, total) }}>
+                {km(d)}
+              </span>
+            ))
+          )}
           <span className="absolute right-0">{km(total)} km</span>
         </div>
       </div>

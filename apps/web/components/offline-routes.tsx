@@ -4,7 +4,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import clsx from "clsx";
-import { ArrowLeft, ArrowUp, Check, ChevronDown, ChevronUp, Clock, CloudDownload, Layers, LocateFixed, Mountain, Smartphone, Trash2, TriangleAlert, Undo2, WifiOff, X } from "lucide-react";
+import { ArrowLeft, ArrowUp, Check, ChevronDown, ChevronUp, Clock, CloudDownload, Layers, LocateFixed, Mountain, Navigation, Play, Smartphone, Trash2, TriangleAlert, Undo2, WifiOff, X } from "lucide-react";
 import { ElevationProfile } from "@/components/elevation-profile";
 import { LayerSheet, loadLayers, REGIONAL, saveLayers, useOnline, type MapLayers, type Overlay } from "@/components/layer-sheet";
 // sin next/dynamic: así sus scripts vienen en el HTML que guarda el service worker y el mapa abre sin red
@@ -28,7 +28,7 @@ import {
   type OfflineRoute,
 } from "@/lib/offline";
 import { DIFFICULTY, formatDuration, formatKm } from "@/lib/routes";
-import { reverseProfile, trackProgress } from "@/lib/track-progress";
+import { loadTrip, reverseProfile, saveTrip, trackProgress } from "@/lib/track-progress";
 
 /** Lista de rutas guardadas en el dispositivo o, con `?ruta=`, el visor de una. Los enlaces son <a>: sin red solo hay HTML del service worker. */
 export function OfflineRoutes() {
@@ -257,7 +257,12 @@ function Viewer({ slug }: { slug: string }) {
   const [lidarFailed, setLidarFailed] = useState(false);
   const online = useOnline();
   const [active, setActive] = useState<number | null>(null);
-  const [back, setBack] = useState(false);
+  // el recorrido en curso vive en el dispositivo: al reabrir el visor sigue donde iba, con o sin señal
+  const [saved] = useState(() => loadTrip(slug));
+  const [startedAt, setStartedAt] = useState(saved?.startedAt ?? null);
+  const [back, setBack] = useState(saved?.back ?? false);
+  // por dónde iba el recorrido guardado: sin él, un ida y vuelta no sabe en cuál de las dos pasadas vas
+  const resume = useRef(saved?.index ?? null);
   const [progress, setProgress] = useState<(ReturnType<typeof trackProgress> & { accuracy: number }) | null>(null);
   const gps = useRef<{ lngLat: [number, number]; accuracy: number } | null>(null);
   // con menos de 2 puntos no hay perfil que recorrer
@@ -286,6 +291,10 @@ function Viewer({ slug }: { slug: string }) {
     setLidar(map, base === "lidar").catch(() => setLidarFailed(true));
     // eslint-disable-next-line react-hooks/exhaustive-deps -- overlays es un arreglo nuevo en cada render; su contenido va en la llave
   }, [map, base, overlays.join()]);
+
+  useEffect(() => {
+    saveTrip(slug, startedAt ? { startedAt, back, index: progress?.index ?? resume.current } : null);
+  }, [slug, startedAt, back, progress?.index]);
 
   useEffect(() => {
     if (!map || open !== "capas") return;
@@ -319,11 +328,26 @@ function Viewer({ slug }: { slug: string }) {
     setLayers(next);
     saveLayers(next);
   }
-  const offM = progress && progress.offM > 50 && progress.offM > progress.accuracy ? progress.offM : null;
-  const figures = progress && [
-    [back ? "Regresado" : "Recorrido", formatKm(progress.doneKm), "text-on-surface"],
-    ["Falta", formatKm(progress.leftKm), "text-secondary"],
-    ["Por subir", `${Math.round(progress.climbM).toLocaleString("es-MX")} m`, "text-on-surface"],
+  function start() {
+    resume.current = null;
+    setStartedAt(Date.now());
+    setProgress(gps.current && locate(gps.current, back, null));
+    setOpen("avance");
+    if (!tracking) ready?.locate();
+  }
+  function finish() {
+    resume.current = null;
+    setStartedAt(null);
+    setBack(false);
+    setActive(null);
+  }
+  // sin recorrido comenzado el GPS solo pinta el punto en el mapa
+  const going = startedAt ? progress : null;
+  const offM = going && going.offM > 50 && going.offM > going.accuracy ? going.offM : null;
+  const figures = going && [
+    [back ? "Regresado" : "Recorrido", ...formatKm(going.doneKm).split(" "), "text-on-surface"],
+    ["Falta", ...formatKm(going.leftKm).split(" "), "text-secondary"],
+    ["Por subir", Math.round(going.climbM).toLocaleString("es-MX"), "m", "text-on-surface"],
   ];
   const expanded = open === "avance";
   return (
@@ -334,11 +358,15 @@ function Viewer({ slug }: { slug: string }) {
         offline
         terrain3d={layers.terrain3d}
         reversed={back}
-        onReady={setReady}
+        onReady={(r) => {
+          setReady(r);
+          // recorrido que ya estaba en curso: el GPS se prende solo
+          if (r && startedAt) r.locate();
+        }}
         onTracking={setTracking}
         onPosition={(lngLat, accuracy) => {
           gps.current = { lngLat, accuracy };
-          setProgress((prev) => locate(gps.current!, back, prev?.index ?? null));
+          setProgress((prev) => locate(gps.current!, back, prev?.index ?? resume.current));
         }}
       />
       {/* a la derecha queda la atribución del mapa */}
@@ -363,7 +391,8 @@ function Viewer({ slug }: { slug: string }) {
         )}
       </div>
 
-      <div className="absolute top-1/2 right-3 flex -translate-y-1/2 flex-col gap-3">
+      {/* con el avance desplegado suben: la hoja llega a media pantalla */}
+      <div className={clsx("absolute right-3 flex -translate-y-1/2 flex-col gap-3 transition-[top]", expanded ? "top-1/4" : "top-1/2")}>
         <button
           type="button"
           aria-label={overlays.length ? `Capas del mapa (${overlays.length} prendidas)` : "Capas del mapa"}
@@ -390,80 +419,107 @@ function Viewer({ slug }: { slug: string }) {
         </button>
       </div>
 
-      {profile && open !== "capas" && (
-        <div className="absolute inset-x-3 bottom-3 mb-[env(safe-area-inset-bottom)] rounded-2xl bg-surface-container-lowest shadow-lg ring-1 ring-outline-variant/60">
-          {expanded ? (
-            <div className="p-3">
-              <div className="mb-2 flex items-center gap-2">
-                {!routeCloses(route.line) && (
-                  <div className="inline-flex rounded-full bg-surface-container p-1">
-                    {[false, true].map((mode) => (
-                      <button
-                        key={String(mode)}
-                        type="button"
-                        aria-pressed={back === mode}
-                        onClick={() => {
-                          if (back === mode) return;
-                          setBack(mode);
-                          setActive(null);
-                          setProgress(gps.current && locate(gps.current, mode, null));
-                        }}
-                        className={clsx(
-                          "flex items-center gap-1.5 rounded-full px-3.5 py-1.5 font-headline text-sm font-semibold",
-                          back === mode ? "bg-primary text-on-primary" : "text-on-surface-variant",
-                        )}
-                      >
-                        {mode && <Undo2 className="size-4" aria-hidden />}
-                        {mode ? "De regreso" : "Ida"}
-                      </button>
-                    ))}
-                  </div>
-                )}
-                <button type="button" onClick={() => setOpen(null)} aria-expanded aria-label="Plegar el avance" className="ml-auto rounded-full p-2 text-on-surface-variant hover:bg-surface-container">
-                  <ChevronDown className="size-5" aria-hidden />
-                </button>
-              </div>
-              {figures && progress ? (
-                <>
-                  <div className="grid grid-cols-3 divide-x divide-outline-variant/60 text-center">
-                    {figures.map(([label, value, color], i) => (
-                      <div key={label}>
-                        <p className="font-mono text-[10px] tracking-wider text-on-surface-variant uppercase">{label}</p>
-                        <p className={clsx("flex items-center justify-center gap-0.5 font-headline text-lg font-bold", color)}>
-                          {i === 2 && <ArrowUp className="size-4" aria-hidden />}
-                          {value}
-                        </p>
-                      </div>
-                    ))}
-                  </div>
-                  <p className="my-2 flex items-center justify-center gap-1 border-b border-outline-variant/60 pb-2 font-mono text-[11px] text-on-surface-variant">
-                    <Clock className="size-3" aria-hidden />≈ {formatDuration(progress.minutes)} para {back ? "volver al inicio" : "llegar al final"}
-                  </p>
-                </>
-              ) : (
-                <p className="mb-2 text-center font-mono text-[11px] text-on-surface-variant">Activa tu ubicación para ver tu avance</p>
-              )}
-              <ElevationProfile profile={profile} active={active} onActive={setActive} overlay position={progress?.index ?? null} />
+      {profile && open !== "capas" && expanded && (
+        <div className="absolute inset-x-0 bottom-0 rounded-t-3xl bg-surface-container-lowest px-4 pt-2 pb-[max(1rem,env(safe-area-inset-bottom))] shadow-2xl ring-1 ring-outline-variant/60">
+          <div className="relative mb-2 flex justify-center">
+            <button type="button" onClick={() => setOpen(null)} aria-expanded aria-label="Plegar el avance" className="flex flex-col items-center gap-1 px-8 text-on-surface-variant">
+              <span className="h-1 w-10 rounded-full bg-outline-variant" aria-hidden />
+              <ChevronDown className="size-5" aria-hidden />
+            </button>
+            {startedAt && (
+              <button type="button" onClick={finish} className="absolute top-1 right-0 rounded-full px-3 py-1 font-headline text-sm font-semibold text-secondary hover:bg-surface-container">
+                Terminar
+              </button>
+            )}
+          </div>
+          {!routeCloses(route.line) && (
+            <div className="mb-3 grid grid-cols-2 rounded-2xl border border-outline-variant bg-surface-container p-1">
+              {[false, true].map((mode) => {
+                const Icon = mode ? Undo2 : Navigation;
+                return (
+                  <button
+                    key={String(mode)}
+                    type="button"
+                    aria-pressed={back === mode}
+                    onClick={() => {
+                      if (back === mode) return;
+                      resume.current = null;
+                      setBack(mode);
+                      setActive(null);
+                      setProgress(gps.current && locate(gps.current, mode, null));
+                    }}
+                    className={clsx(
+                      "flex items-center justify-center gap-2 rounded-xl py-2.5 font-headline font-bold",
+                      back === mode ? "bg-primary text-on-primary" : "text-on-surface-variant",
+                    )}
+                  >
+                    <Icon className="size-4" aria-hidden />
+                    {mode ? "De regreso" : "Ida"}
+                  </button>
+                );
+              })}
             </div>
+          )}
+          {figures && going ? (
+            <>
+              <div className="grid grid-cols-3 divide-x divide-outline-variant/60 border-y border-outline-variant/60 py-2.5 text-center">
+                {figures.map(([label, value, unit, color], i) => (
+                  <div key={label}>
+                    <p className="font-mono text-[11px] tracking-wider text-on-surface-variant uppercase">{label}</p>
+                    <p className={clsx("flex items-baseline justify-center gap-1 font-headline text-2xl font-bold", color)}>
+                      {i === 2 && <ArrowUp className="size-5 self-center" aria-hidden />}
+                      {value}
+                      <span className="text-sm font-medium opacity-80">{unit}</span>
+                    </p>
+                  </div>
+                ))}
+              </div>
+              <p className="my-3 flex items-center justify-center gap-1.5 rounded-xl border border-primary-fixed bg-primary-fixed/40 py-2 font-mono text-xs text-on-primary-fixed-variant">
+                <Clock className="size-3.5" aria-hidden />≈ {formatDuration(going.minutes)} para {back ? "volver al inicio" : "llegar al final"}
+              </p>
+            </>
+          ) : startedAt ? (
+            <p className="mb-3 py-2 text-center font-mono text-xs text-on-surface-variant">Buscando tu ubicación…</p>
           ) : (
+            <button type="button" onClick={start} className="mb-3 flex w-full items-center justify-center gap-2 rounded-2xl bg-primary py-3 font-headline font-bold text-on-primary">
+              <Play className="size-4" aria-hidden />
+              Comenzar ruta
+            </button>
+          )}
+          <ElevationProfile profile={profile} active={active} onActive={setActive} overlay position={going?.index ?? null} />
+        </div>
+      )}
+      {profile && !open && (
+        <div className="absolute inset-x-3 bottom-3 mb-[env(safe-area-inset-bottom)] flex items-center rounded-2xl bg-surface-container-lowest shadow-lg ring-1 ring-outline-variant/60">
+          {startedAt ? (
             <button type="button" aria-expanded={false} onClick={() => setOpen("avance")} className="flex w-full items-center gap-2 px-3 py-2.5 text-left">
               {figures ? (
                 <span className="grid flex-1 grid-cols-3 divide-x divide-outline-variant/60">
-                  {figures.map(([label, value, color], i) => (
+                  {figures.map(([label, value, unit, color], i) => (
                     <span key={label} className="px-2 first:pl-1">
                       <span className="block font-mono text-[10px] tracking-wider text-on-surface-variant uppercase">{label}</span>
                       <span className={clsx("flex items-center gap-0.5 font-headline font-bold", color)}>
                         {i === 2 && <ArrowUp className="size-3.5" aria-hidden />}
-                        {value}
+                        {value} {unit}
                       </span>
                     </span>
                   ))}
                 </span>
               ) : (
-                <span className="flex-1 py-1.5 text-sm text-on-surface-variant">Activa tu ubicación para ver tu avance</span>
+                <span className="flex-1 py-1.5 text-sm text-on-surface-variant">Buscando tu ubicación…</span>
               )}
               <ChevronUp className="size-5 shrink-0 text-on-surface-variant" aria-hidden />
             </button>
+          ) : (
+            <>
+              <button type="button" onClick={start} className="m-1.5 flex flex-1 items-center justify-center gap-2 rounded-xl bg-primary py-2.5 font-headline font-bold text-on-primary">
+                <Play className="size-4" aria-hidden />
+                Comenzar ruta
+              </button>
+              <button type="button" aria-expanded={false} aria-label="Ver el perfil de altitud" onClick={() => setOpen("avance")} className="p-3 text-on-surface-variant">
+                <ChevronUp className="size-5" aria-hidden />
+              </button>
+            </>
           )}
         </div>
       )}
