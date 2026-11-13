@@ -3,7 +3,7 @@
 import { useEffect, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { OpenMapLink } from "@/components/open-map-link";
-import { addHillshade, addPlaceNames, collapseAttribution, lineBounds, MAP_STYLE, maplibregl, setSatellite, setTerrain3d, setTrack, TERRAIN_3D_PITCH, type LineCoords } from "@/lib/maplibre";
+import { addHillshade, addTopoLayers, collapseAttribution, lineBounds, MAP_STYLE, maplibregl, setSatellite, setTerrain3d, setTrack, TERRAIN_3D_PITCH, type LineCoords } from "@/lib/maplibre";
 import { OFFLINE_ZOOM, offlineBounds } from "@/lib/offline";
 
 const LABEL = "flex items-center gap-2 rounded-full border border-outline-variant/80 bg-surface-container-lowest/95 px-2.5 py-1.5 shadow-md";
@@ -87,7 +87,7 @@ export function TrackMap({
     }
     map.once("load", () => {
       addHillshade(map);
-      addPlaceNames(map);
+      addTopoLayers(map);
       setTrack(map, line);
       if (offline) setSatellite(map, true);
       setTerrain3d(map, terrain3dRef.current);
