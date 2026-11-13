@@ -3,7 +3,7 @@
 import { useEffect, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { OpenMapLink } from "@/components/open-map-link";
-import { addHillshade, collapseAttribution, MAP_STYLE, maplibregl } from "@/lib/maplibre";
+import { addHillshade, addPlaceNames, collapseAttribution, MAP_STYLE, maplibregl } from "@/lib/maplibre";
 
 /** `openHref`: un clic en el mapa (sin arrastrar) lleva ahí, al mapa completo. */
 export function StartPointMap({ lat, lng, openHref }: { lat: number; lng: number; openHref?: string }) {
@@ -27,6 +27,7 @@ export function StartPointMap({ lat, lng, openHref }: { lat: number; lng: number
     map.addControl(new maplibregl.NavigationControl({ showCompass: false }), "bottom-right");
     map.once("load", () => {
       addHillshade(map);
+      addPlaceNames(map);
       collapseAttribution(map);
     });
     // maplibre solo emite click si no hubo arrastre: mover el mapa no navega

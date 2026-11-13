@@ -8,6 +8,7 @@ import type { ProfilePoint } from "@/lib/gpx";
 import { CANDIDATE_COLOR, FINDING_COLORS, FINDING_LABELS, STREAM_COLOR, WATERFALL_COLOR, setLidar, setWaterfalls } from "@/lib/lidar-layer";
 import {
   addHillshade,
+  addPlaceNames,
   collapseAttribution,
   lineBounds,
   MAP_STYLE,
@@ -158,6 +159,7 @@ export function RouteMap({
     map.addControl(new maplibregl.NavigationControl({ showCompass: false }), "bottom-right");
     map.once("load", () => {
       addHillshade(map);
+      addPlaceNames(map);
       setTrack(map, trackRef.current ?? []);
       setSatellite(map, satelliteRef.current);
       setTerrain3d(map, terrain3dRef.current);
