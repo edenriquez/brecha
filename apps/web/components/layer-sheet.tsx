@@ -1,8 +1,32 @@
 "use client";
 
-import { useEffect, useRef, useSyncExternalStore } from "react";
+import { useEffect, useRef, useState, useSyncExternalStore } from "react";
+import dynamic from "next/dynamic";
 import clsx from "clsx";
-import { Check, Droplet, Eye, Footprints, Map as MapIcon, Mountain, MountainSnow, Route, Satellite, Tent, WifiOff, X, type LucideIcon } from "lucide-react";
+import {
+  Check,
+  CircleCheck,
+  Download,
+  Droplet,
+  Eye,
+  EyeOff,
+  Footprints,
+  Hexagon,
+  Map as MapIcon,
+  Mountain,
+  MountainSnow,
+  Route,
+  Satellite,
+  Square,
+  Tent,
+  WifiOff,
+  X,
+  type LucideIcon,
+} from "lucide-react";
+import { cancelDownload, DEFAULT_RADIUS_KM, formatMb, type DownloadChoice, type DownloadOptions, type DownloadState, type OfflineRoute } from "@/lib/offline";
+
+// solo con señal: no hace falta en el HTML que guarda el service worker
+const DownloadSheet = dynamic(() => import("./download-sheet").then((m) => m.DownloadSheet), { ssr: false });
 
 export type Base = "satellite" | "topo" | "lidar";
 export type Overlay = "contours" | "names" | "roads" | "waterfalls" | "viewpoints" | "camps";
@@ -17,14 +41,27 @@ const BASES: { id: Base; label: string; icon: LucideIcon; thumb: string }[] = [
   { id: "lidar", label: "Relieve LiDAR", icon: Mountain, thumb: "bg-linear-to-br from-surface-container-high to-outline text-on-primary" },
 ];
 
-const OVERLAYS: { id: Overlay; label: string; icon: LucideIcon }[] = [
-  { id: "contours", label: "Curvas de nivel", icon: Route },
-  { id: "names", label: "Nombres y cerros", icon: Mountain },
-  { id: "roads", label: "Caminos y veredas", icon: Footprints },
-  { id: "waterfalls", label: "Cauces y cascadas", icon: Droplet },
-  { id: "viewpoints", label: "Miradores", icon: Eye },
-  { id: "camps", label: "Zonas de acampar", icon: Tent },
+// de qué opción de la descarga depende cada capa; los nombres van siempre con el mapa base
+const OVERLAYS: { id: Overlay; label: string; icon: LucideIcon; option: keyof DownloadOptions | null }[] = [
+  { id: "contours", label: "Curvas de nivel", icon: Route, option: "contours" },
+  { id: "names", label: "Nombres y cerros", icon: Mountain, option: null },
+  { id: "roads", label: "Caminos y veredas", icon: Footprints, option: "roads" },
+  { id: "waterfalls", label: "Cauces y cascadas", icon: Droplet, option: "waterfalls" },
+  { id: "viewpoints", label: "Miradores", icon: Eye, option: "viewpoints" },
+  { id: "camps", label: "Zonas de acampar", icon: Tent, option: "viewpoints" },
 ];
+
+/** Lo que guardó el registro; el de formato anterior llevaba curvas y nombres, y las regionales según `layers`. */
+export function savedOptions(route: OfflineRoute): DownloadOptions {
+  const regional = !!route.layers;
+  return route.options ?? { terrain: true, contours: true, roads: regional, waterfalls: regional, viewpoints: regional, lidar: false };
+}
+
+/** Si la capa está en el teléfono. */
+export function overlaySaved(id: Overlay, options: DownloadOptions) {
+  const option = OVERLAYS.find((o) => o.id === id)!.option;
+  return !option || (options[option] && (option !== "contours" || options.terrain));
+}
 
 const KEY = "brecha:capas";
 const DEFAULT_LAYERS: MapLayers = { base: "satellite", overlays: ["names"], terrain3d: true };
@@ -61,36 +98,57 @@ export function useOnline() {
 }
 
 const SECTION = "mb-2 mt-4 font-mono text-xs tracking-widest text-on-surface-variant uppercase";
+const ACTION = "flex size-10 items-center justify-center rounded-full";
 
 /**
- * Hoja inferior para elegir mapa base y capas; cada cambio se aplica al instante (lo aplica quien la usa).
- * `zone`: la ruta toca la zona de las capas regionales. `lidar`: el relieve LiDAR se puede cargar (necesita señal).
- * `saved`: lo que ofrece la hoja quedó guardado con la ruta.
+ * Hoja inferior para elegir mapa base y ver qué capas hay en el teléfono (mock 09); los cambios los aplica quien la usa.
+ * `zone`: la ruta toca la zona de las capas regionales. `lidar`: el relieve LiDAR se puede mostrar.
+ * `download`: la descarga en curso de esta ruta; `requested`: lo que pidió esa descarga desde el visor.
  */
 export function LayerSheet({
   layers,
   onChange,
   zone,
   lidar,
-  saved,
+  route,
+  download,
+  requested,
+  onDownload,
   onClose,
 }: {
   layers: MapLayers;
   onChange: (layers: MapLayers) => void;
   zone: boolean;
   lidar: boolean;
-  saved: boolean;
+  route: OfflineRoute;
+  download: DownloadState | undefined;
+  requested: DownloadOptions | null;
+  onDownload: (choice: DownloadChoice) => void;
   onClose: () => void;
 }) {
+  const online = useOnline();
+  const [expand, setExpand] = useState(false);
   const dialog = useRef<HTMLDivElement>(null);
   useEffect(() => dialog.current?.focus(), []);
   useEffect(() => {
+    // con la hoja de descarga abierta, Escape la cierra a ella
+    if (expand) return;
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") onClose();
     };
     document.addEventListener("keydown", onKey);
     return () => document.removeEventListener("keydown", onKey);
-  }, [onClose]);
+  }, [onClose, expand]);
+
+  const saved = savedOptions(route);
+  const radiusKm = route.radiusKm ?? DEFAULT_RADIUS_KM;
+  const busy = download?.status === "bajando" || download?.status === "en-cola";
+  const percent = download?.status === "bajando" ? Math.floor((download.done / download.total) * 100) : 0;
+  const lidarSaved = saved.lidar;
+  function add(option: keyof DownloadOptions) {
+    // las curvas salen del relieve: sin él no hay curvas
+    onDownload({ radiusKm, options: { ...saved, [option]: true, ...(option === "contours" && { terrain: true }) } });
+  }
 
   return (
     <div
@@ -132,34 +190,90 @@ export function LayerSheet({
                 <Icon className="size-7" aria-hidden />
               </span>
               <span className="font-headline text-sm font-semibold">{label}</span>
-              {disabled && <span className="-mt-1 font-mono text-[10px] text-on-surface-variant">Necesita señal</span>}
+              {id === "lidar" && (disabled || lidarSaved) && (
+                <span className={clsx("-mt-1 font-mono text-[10px]", disabled ? "text-secondary" : "text-primary")}>{disabled ? "Necesita señal" : "Descargado"}</span>
+              )}
               {on && <Check className="absolute top-1 right-1 size-5 rounded-full bg-primary p-0.5 text-on-primary" aria-hidden />}
             </button>
           );
         })}
       </div>
 
-      <p className={SECTION}>Sobre el mapa</p>
-      <div className="grid grid-cols-2 gap-2">
-        {OVERLAYS.filter((o) => zone || !REGIONAL.includes(o.id)).map(({ id, label, icon: Icon }) => {
+      <div className="mt-5 mb-2 flex items-baseline justify-between gap-3">
+        <h3 className="font-headline text-lg font-bold">En este teléfono</h3>
+        <span className="font-mono text-xs text-on-surface-variant">
+          {formatMb(route.bytes)}
+          {route.radiusKm && ` · ${route.radiusKm} km alrededor`}
+        </span>
+      </div>
+      <ul className="divide-y divide-outline-variant/60 rounded-2xl border border-outline-variant/70">
+        {OVERLAYS.filter((o) => zone || !REGIONAL.includes(o.id)).map(({ id, label, icon: Icon, option }) => {
+          const here = overlaySaved(id, saved);
           const on = layers.overlays.includes(id);
+          const loading = !here && busy && !!option && !!requested?.[option];
           return (
-            <button
-              key={id}
-              type="button"
-              aria-pressed={on}
-              onClick={() => onChange({ ...layers, overlays: on ? layers.overlays.filter((o) => o !== id) : [...layers.overlays, id] })}
-              className={clsx(
-                "flex min-h-12 items-center gap-2.5 rounded-2xl border px-3 py-2.5 text-left font-headline text-sm font-semibold",
-                on ? "border-primary bg-primary-fixed text-on-primary-fixed-variant" : "border-outline-variant text-on-surface",
+            <li key={id} className="grid min-h-14 grid-cols-[1.5rem_minmax(0,1fr)_6.5rem_2.5rem] items-center gap-2.5 px-3 py-2">
+              <Icon className={clsx("size-5", here ? "text-primary" : "text-on-surface-variant")} aria-hidden />
+              <span id={`capa-${id}`} className="font-headline text-sm font-semibold">
+                {label}
+              </span>
+              <span className="text-right text-xs tabular-nums">
+                {here ? (
+                  <span className="inline-flex items-center gap-1 font-semibold text-primary">
+                    Descargado
+                    <CircleCheck className="size-4 shrink-0 fill-primary text-on-primary" aria-hidden />
+                  </span>
+                ) : loading ? (
+                  <span className="font-semibold text-primary">Descargando… {percent}%</span>
+                ) : online ? (
+                  <span className="text-on-surface-variant">No descargado</span>
+                ) : (
+                  <span className="text-secondary">Necesita señal</span>
+                )}
+              </span>
+              {here ? (
+                <button
+                  type="button"
+                  aria-pressed={on}
+                  aria-label={on ? "Ocultar" : "Mostrar"}
+                  aria-describedby={`capa-${id}`}
+                  onClick={() => onChange({ ...layers, overlays: on ? layers.overlays.filter((o) => o !== id) : [...layers.overlays, id] })}
+                  className={clsx(ACTION, on ? "bg-primary-fixed text-on-primary-fixed-variant" : "bg-surface-container text-on-surface-variant")}
+                >
+                  {on ? <Eye className="size-5" aria-hidden /> : <EyeOff className="size-5" aria-hidden />}
+                </button>
+              ) : loading ? (
+                <button type="button" aria-label="Detener la descarga" onClick={() => cancelDownload(route.slug)} className={clsx(ACTION, "bg-surface-container text-primary")}>
+                  <Square className="size-4 fill-current" aria-hidden />
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  aria-label="Descargar"
+                  aria-describedby={`capa-${id}`}
+                  disabled={!online || busy}
+                  onClick={() => add(option!)}
+                  className={clsx(ACTION, "border border-primary text-primary disabled:border-outline-variant disabled:text-outline-variant")}
+                >
+                  <Download className="size-5" aria-hidden />
+                </button>
               )}
-            >
-              <Icon className="size-5 shrink-0" aria-hidden />
-              {label}
-            </button>
+            </li>
           );
         })}
-      </div>
+      </ul>
+
+      {online && (
+        <button
+          type="button"
+          disabled={busy}
+          onClick={() => setExpand(true)}
+          className="mt-3 flex w-full items-center justify-center gap-2 rounded-2xl border-2 border-primary py-3 font-headline font-semibold text-primary disabled:opacity-50"
+        >
+          <Hexagon className="size-5" aria-hidden />
+          Ampliar la zona descargada
+        </button>
+      )}
 
       <div className="mt-4 flex items-center gap-3 border-t border-outline-variant/60 pt-4">
         <MountainSnow className="size-6 shrink-0 text-primary" aria-hidden />
@@ -177,10 +291,25 @@ export function LayerSheet({
           <span className={clsx("absolute top-1 size-5 rounded-full bg-surface-container-lowest shadow transition-[left]", layers.terrain3d ? "left-6" : "left-1")} />
         </button>
       </div>
-      <p className="mt-3 flex items-center justify-center gap-1.5 text-center font-mono text-[11px] text-on-surface-variant">
-        <WifiOff className="size-3.5 shrink-0" aria-hidden />
-        {saved ? "Guardado con la ruta · funciona sin señal" : "Vuelve a descargar la ruta con señal para usar estas capas sin conexión"}
-      </p>
+      {(!route.cells || !online) && (
+        <p className="mt-3 flex items-center justify-center gap-1.5 text-center font-mono text-[11px] text-on-surface-variant">
+          <WifiOff className="size-3.5 shrink-0" aria-hidden />
+          {route.cells ? "Sin señal · ves solo lo guardado en este teléfono" : "Vuelve a descargar la ruta para ver la zona guardada"}
+        </p>
+      )}
+
+      {expand && (
+        <DownloadSheet
+          route={route}
+          line={route.line}
+          initial={{ radiusKm, options: saved }}
+          onDownload={(choice) => {
+            onDownload(choice);
+            setExpand(false);
+          }}
+          onClose={() => setExpand(false)}
+        />
+      )}
     </div>
   );
 }

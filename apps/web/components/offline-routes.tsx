@@ -4,11 +4,12 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import clsx from "clsx";
-import { ArrowLeft, ArrowUp, Check, ChevronDown, ChevronUp, Clock, CloudDownload, Layers, LocateFixed, Mountain, Navigation, Play, Smartphone, Trash2, TriangleAlert, Undo2, WifiOff, X } from "lucide-react";
+import { ArrowLeft, ArrowUp, Check, ChevronDown, ChevronUp, Clock, CloudDownload, Hexagon, Layers, LocateFixed, Mountain, Navigation, Play, Smartphone, Trash2, TriangleAlert, Undo2, WifiOff, X } from "lucide-react";
 import { ElevationProfile } from "@/components/elevation-profile";
-import { LayerSheet, loadLayers, REGIONAL, saveLayers, useOnline, type MapLayers, type Overlay } from "@/components/layer-sheet";
+import { LayerSheet, loadLayers, overlaySaved, REGIONAL, saveLayers, savedOptions, useOnline, type MapLayers, type Overlay } from "@/components/layer-sheet";
 // sin next/dynamic: así sus scripts vienen en el HTML que guarda el service worker y el mapa abre sin red
 import { routeCloses, TrackMap } from "@/components/track-map";
+import { coverageGeoJson, setCoverage } from "@/lib/coverage-layer";
 import { setLidar, setWaterfalls } from "@/lib/lidar-layer";
 import { setSatellite, setTopoGroup, type maplibregl } from "@/lib/maplibre";
 import { setCamps, setRoads, setViewpoints } from "@/lib/terrain-layers";
@@ -18,13 +19,15 @@ import {
   formatMb,
   getOfflineCover,
   getOfflineRoute,
+  layerZone,
   listOfflineRoutes,
   offlineSupported,
   queueDownload,
   storageStatus,
-  touchesLayerZone,
   useDownloads,
   useIosSafariTab,
+  type DownloadChoice,
+  type DownloadOptions,
   type OfflineRoute,
 } from "@/lib/offline";
 import { DIFFICULTY, formatDuration, formatKm } from "@/lib/routes";
@@ -253,7 +256,11 @@ function Viewer({ slug }: { slug: string }) {
   const [tracking, setTracking] = useState(false);
   // la hoja de capas y el panel de avance nunca a la vez
   const [open, setOpen] = useState<"capas" | "avance" | null>(null);
-  const [zone, setZone] = useState(false);
+  // los `bounds` de capa.json si la ruta toca la zona de las capas regionales
+  const [layerBounds, setLayerBounds] = useState<Awaited<ReturnType<typeof layerZone>>>(null);
+  // lo que pidió la descarga lanzada desde la hoja de capas, para marcar sus filas mientras baja
+  const [requested, setRequested] = useState<DownloadOptions | null>(null);
+  const download = useDownloads().routes?.[slug];
   const [lidarFailed, setLidarFailed] = useState(false);
   const online = useOnline();
   const [active, setActive] = useState<number | null>(null);
@@ -269,17 +276,33 @@ function Viewer({ slug }: { slug: string }) {
   const routeProfile = route?.profile && route.profile.length >= 2 ? route.profile : null;
   const reversed = useMemo(() => routeProfile && reverseProfile(routeProfile), [routeProfile]);
   const map = ready?.map;
-  // el relieve LiDAR no se guarda con la ruta: sin señal se queda el satélite
-  const lidar = zone && online && !lidarFailed;
+  const zone = !!route?.layers || !!layerBounds;
+  const stored = route ? savedOptions(route) : null;
+  // el relieve LiDAR sin descargar necesita señal: sin ella se queda el satélite
+  const lidar = zone && !lidarFailed && (online || !!stored?.lidar);
   const base = layers.base === "lidar" && !lidar ? "satellite" : layers.base;
-  const overlays = layers.overlays.filter((o) => zone || !REGIONAL.includes(o));
+  // lo que no está en el teléfono no se muestra: primero se descarga
+  const overlays = layers.overlays.filter((o) => (zone || !REGIONAL.includes(o)) && !!stored && overlaySaved(o, stored));
+  // memorizada: cada lectura del GPS vuelve a pintar y la zona no cambia
+  const coverage = useMemo(() => {
+    if (!route?.cells) return null;
+    // parciales: solo si el registro guardó capas que existen únicamente dentro de los `bounds`
+    const o = savedOptions(route);
+    return coverageGeoJson(route.cells, o.roads || o.waterfalls || o.viewpoints || o.lidar ? layerBounds : null);
+  }, [route, layerBounds]);
+  const finished = download?.status === "lista";
 
   useEffect(() => {
     (offlineSupported() ? getOfflineRoute(slug) : Promise.resolve(null)).then(setRoute);
   }, [slug]);
 
+  // al terminar una descarga se relee el registro (las capas nuevas pasan a "Descargado"); con el mismo trazo, el mapa no se rehace
   useEffect(() => {
-    if (route) (route.layers ? Promise.resolve(true) : touchesLayerZone(route.line)).then(setZone);
+    if (finished) getOfflineRoute(slug).then((next) => next && setRoute((r) => r && { ...next, line: r.line, profile: r.profile }));
+  }, [slug, finished]);
+
+  useEffect(() => {
+    if (route) layerZone(route.line).then(setLayerBounds);
   }, [route]);
 
   useEffect(() => {
@@ -288,9 +311,14 @@ function Viewer({ slug }: { slug: string }) {
     setTopoGroup(map, "contours", overlays.includes("contours"));
     setTopoGroup(map, "names", overlays.includes("names"));
     for (const [id, set] of Object.entries(REGIONAL_LAYERS)) set(map, overlays.includes(id as Overlay)).catch((e) => console.error(`capa ${id}:`, e));
-    setLidar(map, base === "lidar").catch(() => setLidarFailed(true));
+    setLidar(map, base === "lidar", !!stored?.lidar).catch(() => setLidarFailed(true));
     // eslint-disable-next-line react-hooks/exhaustive-deps -- overlays es un arreglo nuevo en cada render; su contenido va en la llave
   }, [map, base, overlays.join()]);
+
+  // la zona descargada solo mientras la hoja de capas está abierta
+  useEffect(() => {
+    if (map) setCoverage(map, open === "capas" ? coverage : null);
+  }, [map, open, coverage]);
 
   useEffect(() => {
     saveTrip(slug, startedAt ? { startedAt, back, index: progress?.index ?? resume.current } : null);
@@ -323,6 +351,10 @@ function Viewer({ slug }: { slug: string }) {
   function locate(fix: { lngLat: [number, number]; accuracy: number }, inReverse: boolean, last: number | null) {
     const p = inReverse ? reversed : routeProfile;
     return p ? { ...trackProgress(p, { lng: fix.lngLat[0], lat: fix.lngLat[1] }, last), accuracy: fix.accuracy } : null;
+  }
+  function downloadMore(choice: DownloadChoice) {
+    setRequested(choice.options);
+    queueDownload(route!, route!.line, route!.profile, choice);
   }
   function changeLayers(next: MapLayers) {
     setLayers(next);
@@ -388,6 +420,24 @@ function Viewer({ slug }: { slug: string }) {
               <p className="text-sm">Regresa hacia la línea naranja.</p>
             </div>
           </div>
+        )}
+        {open === "capas" && coverage && (
+          <p className="pointer-events-auto flex items-center gap-3 rounded-full bg-surface-container-lowest/95 px-3 py-1.5 text-xs shadow-lg ring-1 ring-outline-variant/60">
+            <span className="flex items-center gap-1">
+              <Hexagon className="size-4 text-primary" aria-hidden />
+              Descargado
+            </span>
+            {coverage.partial.features.length > 0 && (
+              <span className="flex items-center gap-1">
+                <Hexagon className="size-4 text-secondary [stroke-dasharray:3_2]" aria-hidden />
+                Parcial
+              </span>
+            )}
+            <span className="flex items-center gap-1">
+              <Hexagon className="size-4 fill-on-surface/70 text-on-surface/70" aria-hidden />
+              Sin datos
+            </span>
+          </p>
         )}
       </div>
 
@@ -530,8 +580,10 @@ function Viewer({ slug }: { slug: string }) {
           onChange={changeLayers}
           zone={zone}
           lidar={lidar}
-          // fuera de la zona no hay capas que bajar: lo que ofrece la hoja ya va con la ruta
-          saved={!zone || !!route.layers}
+          route={route}
+          download={download}
+          requested={requested}
+          onDownload={downloadMore}
           onClose={() => setOpen(null)}
         />
       )}

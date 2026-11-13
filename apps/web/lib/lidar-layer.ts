@@ -102,7 +102,8 @@ export function onClickShow<T>(map: maplibregl.Map, layer: string, content: (pro
   map.on("mouseleave", layer, () => (map.getCanvas().style.cursor = ""));
 }
 
-const LINE_LAYERS = ["view-zones", "streams-main", "streams-minor", "roads-casing", "roads", "lidar-coverage"];
+// el velo de la zona descargada (lib/coverage-layer.ts) también queda encima de los relieves
+const LINE_LAYERS = ["coverage-veil", "view-zones", "streams-main", "streams-minor", "roads-casing", "roads", "lidar-coverage"];
 const POINT_LAYERS = ["lidar-candidates", "lidar-findings", "waterfalls", "viewpoints", "camps"];
 
 /**
@@ -115,12 +116,17 @@ export function overlayAnchor(map: maplibregl.Map, kind: "raster" | "lines") {
   return map.getStyle().layers?.find((l) => above.has(l.id) || (hasTrack ? l.id === "track-casing" : l.type === "symbol"))?.id;
 }
 
-async function addLayers(map: maplibregl.Map): Promise<Manifest> {
+// los zooms que guarda la descarga (LIDAR_ZOOMS en lib/offline.ts)
+const SAVED_ZOOMS = { minzoom: 9, maxzoom: 15 };
+
+async function addLayers(map: maplibregl.Map, saved: boolean): Promise<Manifest> {
   const manifest: Manifest = await fetch(`${BASE}/capa.json`).then((r) => r.json());
   registerPmtiles();
   manifest.partes.forEach((file, i) => {
     const id = `lidar-relief-${i}`;
-    map.addSource(id, { type: "raster", url: `pmtiles://${BASE}/${file}`, tileSize: 256, attribution: ATTRIBUTION });
+    // descargado: las teselas que guardó lib/offline.ts, que public/sw.js sirve con y sin red
+    const tiles = saved ? { tiles: [`${BASE}/${file.replace(/\.pmtiles$/, "")}/{z}/{x}/{y}`], ...SAVED_ZOOMS } : { url: `pmtiles://${BASE}/${file}` };
+    map.addSource(id, { type: "raster", ...tiles, tileSize: 256, attribution: ATTRIBUTION });
     map.addLayer({ id, type: "raster", source: id, paint: { "raster-opacity": 0.85, "raster-fade-duration": 150 } }, overlayAnchor(map, "raster"));
   });
   map.addSource("lidar-coverage", { type: "geojson", data: `${BASE}/cobertura.geojson` });
@@ -169,12 +175,13 @@ async function addLayers(map: maplibregl.Map): Promise<Manifest> {
 /**
  * Prende o apaga el relieve LiDAR con sus hallazgos. Llamar después del evento "load".
  * Resuelve con los límites de la zona analizada (la primera vez hay que pedir el manifiesto).
+ * `saved`: el relieve se lee de las teselas descargadas con la ruta y no del PMTiles del bucket (se fija al crearlo).
  */
-export async function setLidar(map: maplibregl.Map, visible: boolean): Promise<maplibregl.LngLatBounds | null> {
+export async function setLidar(map: maplibregl.Map, visible: boolean, saved = false): Promise<maplibregl.LngLatBounds | null> {
   let pending = loading.get(map);
   if (!pending) {
     if (!visible) return null;
-    pending = addLayers(map);
+    pending = addLayers(map, saved);
     loading.set(map, pending);
     pending.catch(() => loading.delete(map));
   }
