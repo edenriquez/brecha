@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { Heart } from "lucide-react";
-import { RouteCard } from "@/components/route-card";
+import { SavedRoutes } from "@/components/saved-routes";
 import { TopNav } from "@/components/top-nav";
 import { requireUser } from "@/lib/auth.server";
 import type { RouteSummary } from "@/lib/routes";
@@ -36,11 +36,7 @@ export default async function SavedRoutesPage() {
         </div>
 
         {routes.length ? (
-          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
-            {routes.map((r) => (
-              <RouteCard key={r.id} route={r} />
-            ))}
-          </div>
+          <SavedRoutes routes={routes} />
         ) : (
           <div className="flex flex-col items-center gap-3 rounded-2xl border border-dashed border-outline-variant bg-surface-container-lowest/60 px-6 py-14 text-center">
             <Heart className="size-10 text-outline-variant" aria-hidden />
