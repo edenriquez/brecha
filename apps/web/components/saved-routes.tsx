@@ -17,6 +17,8 @@ type Shape = { line: [number, number][]; profile: ProfilePoint[] | null };
 // encendido: cada visita a /guardadas encola las nuevas y las incompletas
 const AUTO_KEY = "brecha-descargar-guardadas";
 const noSubscribe = () => () => {};
+// una vez por carga de la app: volver a /guardadas no reencola lo que se canceló a mano
+let autoQueued = false;
 
 function readAuto() {
   try {
@@ -37,10 +39,12 @@ export function SavedRoutes({ routes }: { routes: RouteSummary[] }) {
   const stored = useSyncExternalStore(noSubscribe, readAuto, () => false);
   const [auto, setAuto] = useState<boolean | null>(null);
   const on = (auto ?? stored) && !iosTab;
-  const autoRan = useRef(false);
+  const [shapesError, setShapesError] = useState(false);
+  const loading = useRef<PromiseLike<Record<string, Shape> | null> | null>(null);
 
-  useEffect(() => {
-    createClient()
+  // los trazos se piden solo con el interruptor encendido o en la primera descarga
+  function loadShapes() {
+    return (loading.current ??= createClient()
       .from("route_shapes")
       .select("slug, track, elevation_profile")
       .in(
@@ -48,45 +52,54 @@ export function SavedRoutes({ routes }: { routes: RouteSummary[] }) {
         routes.map((r) => r.slug),
       )
       .then(({ data, error }) => {
-        if (error) console.error("route_shapes guardadas:", error.message);
-        const rows = (data ?? []) as { slug: string; track: LineString | null; elevation_profile: ProfilePoint[] | null }[];
-        setShapes(Object.fromEntries(rows.filter((r) => r.track).map((r) => [r.slug, { line: r.track!.coordinates as [number, number][], profile: r.elevation_profile }])));
-      });
-  }, [routes]);
+        setShapesError(!!error);
+        if (error) {
+          console.error("route_shapes guardadas:", error.message);
+          loading.current = null;
+          return null;
+        }
+        const rows = data as { slug: string; track: LineString | null; elevation_profile: ProfilePoint[] | null }[];
+        const next = Object.fromEntries(rows.filter((r) => r.track).map((r) => [r.slug, { line: r.track!.coordinates as [number, number][], profile: r.elevation_profile }]));
+        setShapes(next);
+        return next;
+      }));
+  }
+
+  useEffect(() => {
+    // tras un fallo no se reintenta solo: lo reintenta la siguiente acción
+    if (on && !shapes && !shapesError) void loadShapes();
+  });
 
   const mb = useMemo(() => Object.values(shapes ?? {}).reduce((sum, s) => sum + estimateDownload(s.line).mb, 0), [shapes]);
 
   function queue(route: RouteSummary) {
-    const shape = shapes?.[route.slug];
-    if (shape) queueDownload(route, shape.line, shape.profile);
+    loadShapes().then((loaded) => {
+      const shape = loaded?.[route.slug];
+      if (shape) queueDownload(route, shape.line, shape.profile);
+    });
   }
 
-  function queueAll() {
+  // con el interruptor encendido, ya leídos los trazos y el dispositivo
+  useEffect(() => {
+    if (!on || !shapes || !downloads || autoQueued) return;
+    autoQueued = true;
     for (const r of routes) {
-      const status = downloads?.[r.slug]?.status;
+      const status = downloads[r.slug]?.status;
       if (status !== "lista" && status !== "bajando" && status !== "en-cola") queue(r);
     }
-  }
-
-  // al volver con el interruptor encendido, una vez ya leídos los trazos y el dispositivo
-  useEffect(() => {
-    if (!on || !shapes || !downloads || autoRan.current) return;
-    autoRan.current = true;
-    queueAll();
   });
 
   function toggle() {
     const next = !on;
     setAuto(next);
-    autoRan.current = true;
+    // encender encola todo en el efecto de arriba; apagar no borra lo descargado (eso se hace en /descargas)
+    autoQueued = !next;
     try {
       localStorage.setItem(AUTO_KEY, next ? "1" : "0");
     } catch {
       // sin almacenamiento: vale solo para esta visita
     }
-    // apagar no borra lo descargado: eso se hace en /descargas
-    if (next) queueAll();
-    else cancelAllDownloads();
+    if (!next) cancelAllDownloads();
   }
 
   const withShape = shapes ? routes.filter((r) => shapes[r.slug]).length : 0;
@@ -102,7 +115,7 @@ export function SavedRoutes({ routes }: { routes: RouteSummary[] }) {
             <div className="min-w-0 flex-1">
               <p className="font-headline font-bold">Descargar para usar sin señal</p>
               <p className="font-mono text-xs text-on-surface-variant">
-                {withShape} {withShape === 1 ? "ruta" : "rutas"} · ≈ {Math.round(mb)} MB
+                {shapes ? `${withShape} ${withShape === 1 ? "ruta" : "rutas"} · ≈ ${Math.round(mb)} MB` : `${routes.length} ${routes.length === 1 ? "ruta" : "rutas"}`}
               </p>
             </div>
             <button
@@ -110,13 +123,14 @@ export function SavedRoutes({ routes }: { routes: RouteSummary[] }) {
               role="switch"
               aria-checked={on}
               aria-label="Descargar para usar sin señal"
-              disabled={iosTab || !shapes}
+              disabled={iosTab}
               onClick={toggle}
               className={clsx("relative h-7 w-12 shrink-0 rounded-full transition-colors disabled:opacity-50", on ? "bg-primary" : "bg-outline-variant")}
             >
               <span className={clsx("absolute top-1 left-1 size-5 rounded-full bg-surface-container-lowest shadow-xs transition-transform", on && "translate-x-5")} />
             </button>
           </div>
+          {shapesError && <p className="text-xs font-medium text-error">No se pudieron cargar los trazos. Revisa tu conexión.</p>}
           {iosTab && (
             <p className="flex gap-2 rounded-xl bg-secondary-fixed/40 p-3 text-xs">
               <Smartphone className="size-4 shrink-0 text-secondary" aria-hidden />
@@ -130,7 +144,14 @@ export function SavedRoutes({ routes }: { routes: RouteSummary[] }) {
 
       <ul className="grid grid-cols-1 gap-3 lg:grid-cols-2">
         {routes.map((r) => (
-          <SavedRow key={r.id} route={r} hasShape={!shapes || !!shapes[r.slug]} download={supported && downloads && shapes?.[r.slug] ? (downloads[r.slug] ?? null) : undefined} onQueue={() => queue(r)} />
+          <SavedRow
+            key={r.id}
+            route={r}
+            hasShape={!shapes || !!shapes[r.slug]}
+            download={!supported || !downloads ? undefined : (downloads[r.slug] ?? (shapes && !shapes[r.slug] ? undefined : null))}
+            disabled={iosTab}
+            onQueue={() => queue(r)}
+          />
         ))}
       </ul>
     </div>
@@ -138,7 +159,19 @@ export function SavedRoutes({ routes }: { routes: RouteSummary[] }) {
 }
 
 /** `download`: undefined sin estado que mostrar (sin soporte o sin trazo), null si no está descargada. */
-function SavedRow({ route, hasShape, download, onQueue }: { route: RouteSummary; hasShape: boolean; download: DownloadState | null | undefined; onQueue: () => void }) {
+function SavedRow({
+  route,
+  hasShape,
+  download,
+  disabled,
+  onQueue,
+}: {
+  route: RouteSummary;
+  hasShape: boolean;
+  download: DownloadState | null | undefined;
+  disabled: boolean;
+  onQueue: () => void;
+}) {
   const percent = download?.status === "bajando" ? Math.floor((download.done / download.total) * 100) : 0;
   return (
     <li className="flex items-center gap-4 rounded-2xl border border-outline-variant/70 bg-surface-container-lowest p-3 shadow-xs">
@@ -174,7 +207,7 @@ function SavedRow({ route, hasShape, download, onQueue }: { route: RouteSummary;
         )}
       </div>
       {download === null && (
-        <button type="button" onClick={onQueue} aria-label={`Descargar ${route.name}`} className={clsx(ROUND, "border border-outline-variant text-primary hover:bg-surface-container")}>
+        <button type="button" onClick={onQueue} disabled={disabled} aria-label={`Descargar ${route.name}`} className={clsx(ROUND, "disabled:opacity-50 border border-outline-variant text-primary hover:bg-surface-container")}>
           <ArrowDown className="size-5" aria-hidden />
         </button>
       )}
@@ -202,7 +235,7 @@ function SavedRow({ route, hasShape, download, onQueue }: { route: RouteSummary;
         </button>
       )}
       {download?.status === "incompleta" && (
-        <button type="button" onClick={onQueue} aria-label={`Reintentar la descarga de ${route.name}`} className={clsx(ROUND, "border-2 border-secondary text-secondary hover:bg-secondary-fixed/40")}>
+        <button type="button" onClick={onQueue} disabled={disabled} aria-label={`Reintentar la descarga de ${route.name}`} className={clsx(ROUND, "disabled:opacity-50 border-2 border-secondary text-secondary hover:bg-secondary-fixed/40")}>
           <RotateCw className="size-5" aria-hidden />
         </button>
       )}

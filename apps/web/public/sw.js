@@ -120,7 +120,8 @@ async function navigate(request, url) {
   } catch {
     if (!(await app.match(OFFLINE_PAGE))) return offlineHtml();
     const slug = url.pathname.match(/^\/rutas\/([^/]+)\/?$/)?.[1];
-    const saved = slug && (await (await caches.open(ROUTES_CACHE)).match(ROUTE_KEY + slug));
+    // solo las completas abren el visor; una a medias cae en ?desde= como cualquier página
+    const saved = slug && (await (await caches.open(ROUTES_CACHE)).match(ROUTE_KEY + slug).then((r) => r?.json().then((route) => route.complete !== false)));
     return Response.redirect(saved ? `${OFFLINE_PAGE}?ruta=${slug}` : `${OFFLINE_PAGE}?desde=${encodeURIComponent(url.pathname + url.search)}`, 302);
   }
 }

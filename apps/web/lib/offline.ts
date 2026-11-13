@@ -1,9 +1,8 @@
 "use client";
 
 import { useEffect, useSyncExternalStore } from "react";
-import { DEM_TILES } from "@/lib/dem";
 import type { ProfilePoint } from "@/lib/gpx";
-import { MAP_STYLE, SATELLITE_TILES } from "@/lib/map-sources";
+import { DEM_TILES, MAP_STYLE, SATELLITE_TILES } from "@/lib/map-sources";
 import type { RouteSummary } from "@/lib/routes";
 
 // Los nombres de los caches y la llave de las teselas vectoriales los comparte public/sw.js
@@ -236,7 +235,10 @@ export async function downloadRoute(
   // el registro va antes de bajar: si se corta, la ruta queda incompleta y sus teselas se pueden borrar
   const saveRecord = async (record: OfflineRoute) =>
     (await routesCache()).put(ROUTE_KEY + encodeURIComponent(route.slug), new Response(JSON.stringify(record), { headers: { "Content-Type": "application/json" } }));
-  const record: OfflineRoute = { ...route, line, profile, tiles: tiles.map(tileCacheKey), bytes: 0, savedAt: new Date().toISOString(), complete: false };
+  // al reanudar se parte de lo ya bajado: las teselas en cache se saltan
+  const prev = await getOfflineRoute(route.slug);
+  let bytes = prev?.complete === false ? prev.bytes : 0;
+  const record: OfflineRoute = { ...route, line, profile, tiles: tiles.map(tileCacheKey), bytes, savedAt: new Date().toISOString(), complete: false };
   await saveRecord(record);
   const storage = await navigator.storage?.estimate?.().catch(() => undefined);
   if (storage?.quota !== undefined && storage.usage !== undefined && storage.quota - storage.usage < estimateDownload(line).mb * 1024 * 1024) {
@@ -246,22 +248,34 @@ export async function downloadRoute(
   const [mapCache, styleCache] = await Promise.all([caches.open(MAP_CACHE), caches.open(STYLE_CACHE)]);
   const jobs = [...style.urls.map((url) => ({ url, cache: styleCache, key: url })), ...tiles.map((url) => ({ url, cache: mapCache, key: tileCacheKey(url) }))];
   let done = 0;
-  let bytes = 0;
   let next = 0;
+  let failed = false;
   onProgress(0, jobs.length);
-  await Promise.all(
-    Array.from({ length: CONCURRENCY }, async () => {
-      while (next < jobs.length) {
-        const job = jobs[next++];
-        // compartida con otra ruta ya descargada
-        if (job.cache !== mapCache || !(await mapCache.match(job.key))) bytes += await fetchInto(job.cache, job.url, signal, job.key);
-        onProgress(++done, jobs.length);
-      }
-    }),
-  );
-
-  // sin portada si falla: no vale perder la descarga por una foto
-  if (route.cover_url) await fetchInto(await routesCache(), route.cover_url, signal, COVER_KEY + encodeURIComponent(route.slug)).catch(() => 0);
+  try {
+    await Promise.all(
+      Array.from({ length: CONCURRENCY }, async () => {
+        // al primer fallo los demás dejan de bajar
+        while (!failed && next < jobs.length) {
+          const job = jobs[next++];
+          try {
+            // compartida con otra ruta ya descargada
+            if (job.cache !== mapCache || !(await mapCache.match(job.key))) bytes += await fetchInto(job.cache, job.url, signal, job.key);
+          } catch (e) {
+            failed = true;
+            throw e;
+          }
+          onProgress(++done, jobs.length);
+        }
+      }),
+    );
+    // sin portada si falla: no vale perder la descarga por una foto
+    if (route.cover_url) await fetchInto(await routesCache(), route.cover_url, signal, COVER_KEY + encodeURIComponent(route.slug)).catch(() => 0);
+    signal.throwIfAborted();
+  } catch (e) {
+    // cortada o con error: se guarda lo bajado para que Reanudar sume
+    await saveRecord({ ...record, bytes });
+    throw e;
+  }
   const saved: OfflineRoute = { ...record, bytes, complete: true };
   await saveRecord(saved);
   await cacheOfflineShell();
@@ -327,7 +341,9 @@ function subscribeDownloads(listener: () => void) {
 function loadDownloads() {
   if (loaded || !offlineSupported()) return;
   loaded = true;
-  listOfflineRoutes().then((saved) => {
+  listOfflineRoutes()
+    .catch(() => [])
+    .then((saved) => {
     const routes = { ...downloads.routes };
     for (const r of saved) routes[r.slug] ??= r.complete === false ? { status: "incompleta" } : { status: "lista", bytes: r.bytes };
     emitDownloads({ routes });
@@ -342,7 +358,10 @@ async function runQueue() {
   current = { slug, controller };
   setDownload(slug, { status: "bajando", done: 0, total: 1 });
   try {
-    const saved = await downloadRoute(job.route, job.line, job.profile, (done, total) => setDownload(slug, { status: "bajando", done, total }), controller.signal);
+    const saved = await downloadRoute(job.route, job.line, job.profile, (done, total) => {
+        // un progreso tardío no pisa el estado de una ruta que ya no es la actual
+        if (current?.controller === controller) setDownload(slug, { status: "bajando", done, total });
+      }, controller.signal);
     setDownload(slug, { status: "lista", bytes: saved.bytes });
   } catch (e) {
     let error: string | undefined;
@@ -384,8 +403,11 @@ export function cancelAllDownloads() {
 }
 
 /** Estado de descarga por slug (null mientras se lee el dispositivo) y el avance de la tanda en cola. */
-export function useDownloads() {
-  useEffect(loadDownloads, []);
+export function useDownloads(fromDevice = true) {
+  // sin fromDevice solo se lee la cola en memoria (la píldora, en todas las páginas)
+  useEffect(() => {
+    if (fromDevice) loadDownloads();
+  }, [fromDevice]);
   return useSyncExternalStore(subscribeDownloads, () => downloads, () => SERVER_DOWNLOADS);
 }
 

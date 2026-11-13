@@ -8,7 +8,7 @@ import { useDownloads } from "@/lib/offline";
 
 /** Avance de la cola de descargas en cualquier página, salvo en /descargas que ya lo muestra. */
 export function DownloadPill() {
-  const { routes, done, total } = useDownloads();
+  const { routes, done, total } = useDownloads(false);
   const pathname = usePathname();
   const active = total > 0;
 

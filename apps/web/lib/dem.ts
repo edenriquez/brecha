@@ -1,8 +1,10 @@
 import { PMTiles } from "pmtiles";
 import type { TrackPoint } from "@/lib/gpx";
+import { DEM_TILES } from "@/lib/map-sources";
 
-// Modelo de elevación abierto (Terrarium de Mapzen/AWS, sin llave): sombrea el relieve y completa GPX sin altitud
-export const DEM_TILES = "https://s3.amazonaws.com/elevation-tiles-prod/terrarium/{z}/{x}/{y}.png";
+// lo importa también el mapa (lib/maplibre.ts)
+export { DEM_TILES };
+
 const ZOOM = 12; // ~30 m por pixel en la latitud de CDMX, la resolución del modelo
 const TILE = 256;
 
