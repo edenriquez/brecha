@@ -15,10 +15,16 @@ function labelMarker(text: string, dot: string) {
   return el;
 }
 
+/** Inicio y fin a menos de 200 m: la ruta cierra. */
+export function routeCloses(line: LineCoords) {
+  return new maplibregl.LngLat(...line[0]).distanceTo(new maplibregl.LngLat(...line[line.length - 1])) < 200;
+}
+
 /**
  * Mapa con el trazo de la ruta; `hover` es el punto que se señala desde el perfil de altitud.
  * `offline`: visor a pantalla completa de una ruta descargada, en satélite, con GPS y sin salir de la zona guardada.
  * `openHref`: un clic en el mapa (sin arrastrar) lleva ahí, al mapa completo.
+ * `onPosition`: cada lectura del GPS del visor. `reversed`: de regreso, "Inicio" y "Fin" se intercambian.
  */
 export function TrackMap({
   line,
@@ -26,12 +32,16 @@ export function TrackMap({
   offline = false,
   terrain3d = false,
   openHref,
+  onPosition,
+  reversed = false,
 }: {
   line: LineCoords;
   hover: [number, number] | null;
   offline?: boolean;
   terrain3d?: boolean;
   openHref?: string;
+  onPosition?: (lngLat: [number, number], accuracy: number) => void;
+  reversed?: boolean;
 }) {
   const router = useRouter();
   const container = useRef<HTMLDivElement>(null);
@@ -43,6 +53,12 @@ export function TrackMap({
   useEffect(() => {
     openHrefRef.current = openHref;
   }, [openHref]);
+  const onPositionRef = useRef(onPosition);
+  useEffect(() => {
+    onPositionRef.current = onPosition;
+  }, [onPosition]);
+  const reversedRef = useRef(reversed);
+  const labels = useRef<{ start: Element; end: Element } | null>(null);
 
   useEffect(() => {
     if (!container.current || line.length < 2) return;
@@ -62,7 +78,12 @@ export function TrackMap({
     });
     if (openHrefRef.current) map.getCanvas().style.cursor = "pointer";
     if (offline) {
-      map.addControl(new maplibregl.GeolocateControl({ positionOptions: { enableHighAccuracy: true }, trackUserLocation: true, fitBoundsOptions: { maxZoom: 15 } }), "bottom-right");
+      const geolocate = new maplibregl.GeolocateControl({ positionOptions: { enableHighAccuracy: true }, trackUserLocation: true, fitBoundsOptions: { maxZoom: 15 } });
+      // fuera de la zona guardada llega outofmaxbounds en vez de geolocate: también cuenta como lectura
+      const report = (e: maplibregl.GeolocatePositionEvent) => onPositionRef.current?.([e.coords.longitude, e.coords.latitude], e.coords.accuracy);
+      geolocate.on("geolocate", report);
+      geolocate.on("outofmaxbounds", report);
+      map.addControl(geolocate, "bottom-right");
     }
     map.once("load", () => {
       addHillshade(map);
@@ -76,9 +97,12 @@ export function TrackMap({
 
     const start = line[0];
     const end = line[line.length - 1];
-    const closes = new maplibregl.LngLat(...start).distanceTo(new maplibregl.LngLat(...end)) < 200;
-    if (!closes) new maplibregl.Marker({ element: labelMarker("Fin", "bg-secondary"), anchor: "bottom" }).setLngLat(end).addTo(map);
-    new maplibregl.Marker({ element: labelMarker(closes ? "Inicio y fin" : "Inicio", "bg-primary"), anchor: "bottom" }).setLngLat(start).addTo(map);
+    const closes = routeCloses(line);
+    const endEl = labelMarker(reversedRef.current ? "Inicio" : "Fin", "bg-secondary");
+    if (!closes) new maplibregl.Marker({ element: endEl, anchor: "bottom" }).setLngLat(end).addTo(map);
+    const startEl = labelMarker(closes ? "Inicio y fin" : reversedRef.current ? "Fin" : "Inicio", "bg-primary");
+    new maplibregl.Marker({ element: startEl, anchor: "bottom" }).setLngLat(start).addTo(map);
+    if (!closes) labels.current = { start: startEl.lastElementChild!, end: endEl.lastElementChild! };
 
     const dot = document.createElement("div");
     dot.className = "size-4 rounded-full border-[3px] border-white bg-secondary shadow-md";
@@ -88,6 +112,7 @@ export function TrackMap({
 
     return () => {
       hoverMarker.current = null;
+      labels.current = null;
       mapRef.current = null;
       styleLoaded.current = false;
       map.remove();
@@ -101,6 +126,14 @@ export function TrackMap({
     setTerrain3d(map, terrain3d);
     map.easeTo(terrain3d ? { pitch: TERRAIN_3D_PITCH, duration: 1000 } : { pitch: 0, bearing: 0, duration: 700 });
   }, [terrain3d]);
+
+  // solo cambia el texto: recrear el mapa perdería la vista
+  useEffect(() => {
+    reversedRef.current = reversed;
+    if (!labels.current) return;
+    labels.current.start.textContent = reversed ? "Fin" : "Inicio";
+    labels.current.end.textContent = reversed ? "Inicio" : "Fin";
+  }, [reversed]);
 
   useEffect(() => {
     const marker = hoverMarker.current;

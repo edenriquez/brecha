@@ -22,12 +22,15 @@ export function ElevationProfile({
   active,
   onActive,
   overlay,
+  position,
 }: {
   profile: ProfilePoint[];
   active: number | null;
   onActive: (index: number | null) => void;
   /** Encima del mapa del recorrido: más bajo, y el punto solo se mueve arrastrando (no al pasar el cursor) */
   overlay?: boolean;
+  /** Índice donde va el GPS: punto azul con línea punteada */
+  position?: number | null;
 }) {
   const gradient = useId();
   const box = useRef<HTMLDivElement>(null);
@@ -133,6 +136,15 @@ export function ElevationProfile({
               >
                 km {km(point[0])} · {meters(point[1])}
               </div>
+            </>
+          )}
+          {position != null && (
+            <>
+              <div className="pointer-events-none absolute inset-y-0 -translate-x-1/2 border-l-2 border-dotted border-[#1da1f2]" style={{ left: pct(chart.x(profile[position][0]), W) }} />
+              <div
+                className="pointer-events-none absolute size-3 -translate-x-1/2 -translate-y-1/2 rounded-full border-2 border-white bg-[#1da1f2] shadow"
+                style={{ left: pct(chart.x(profile[position][0]), W), top: pct(chart.y(profile[position][1]), H) }}
+              />
             </>
           )}
         </div>
