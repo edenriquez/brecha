@@ -1,7 +1,7 @@
 "use client";
+/* eslint-disable @next/next/no-html-link-for-pages -- sin red solo sirve la navegación completa (la maneja el service worker) */
 
 import { useEffect, useState } from "react";
-import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import clsx from "clsx";
 import { ArrowLeft, CloudDownload, Mountain, Rotate3d, Smartphone, Trash2, TrendingUp, WifiOff } from "lucide-react";
@@ -21,6 +21,9 @@ function List() {
   const [routes, setRoutes] = useState<OfflineRoute[] | null>(null);
   const [usage, setUsage] = useState<number | null>(null);
   const iosTab = useIosSafariTab();
+  // el service worker manda aquí lo que no pudo abrir sin señal; solo rutas internas (el navegador lee /\ como //)
+  const desde = useSearchParams().get("desde");
+  const retryHref = desde?.startsWith("/") && !/^\/[/\\]/.test(desde) ? desde : null;
 
   useEffect(() => {
     (offlineSupported() ? listOfflineRoutes() : Promise.resolve([])).then(setRoutes);
@@ -36,10 +39,10 @@ function List() {
     <div className="min-h-dvh bg-surface-container-low">
       <header className="sticky top-0 z-10 border-b border-outline-variant bg-surface shadow-sm">
         <div className="mx-auto flex h-16 max-w-3xl items-center gap-3 px-4">
-          <Link href="/" className="flex items-center gap-2 font-headline text-2xl font-bold tracking-tight text-primary">
+          <a href="/" className="flex items-center gap-2 font-headline text-2xl font-bold tracking-tight text-primary">
             <Mountain className="size-7 fill-primary-container text-primary-container" aria-hidden />
             brecha
-          </Link>
+          </a>
         </div>
       </header>
       <main className="mx-auto max-w-3xl space-y-5 px-4 py-6">
@@ -53,6 +56,18 @@ function List() {
             {usage !== null && ` Brecha ocupa ${formatMb(usage)} en este dispositivo.`}
           </p>
         </div>
+
+        {retryHref && (
+          <p className="flex gap-2 rounded-xl bg-secondary-fixed/40 p-3 text-xs">
+            <WifiOff className="size-4 shrink-0 text-secondary" aria-hidden />
+            <span>
+              No hay señal para abrir esa página.{" "}
+              <a href={retryHref} className="font-semibold underline">
+                Reintentar
+              </a>
+            </span>
+          </p>
+        )}
 
         {iosTab && (
           <p className="flex gap-2 rounded-xl bg-secondary-fixed/40 p-3 text-xs">
@@ -70,9 +85,9 @@ function List() {
             <p className="max-w-sm text-sm text-on-surface-variant">
               En la página de una ruta con trazo toca <b>Guardar sin conexión</b> antes de salir.
             </p>
-            <Link href="/" className="mt-2 rounded-full bg-primary px-5 py-2 font-headline text-sm font-semibold text-on-primary">
+            <a href="/" className="mt-2 rounded-full bg-primary px-5 py-2 font-headline text-sm font-semibold text-on-primary">
               Explorar rutas
-            </Link>
+            </a>
           </div>
         )}
 
