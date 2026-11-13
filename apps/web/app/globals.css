@@ -65,3 +65,56 @@ body {
 .maplibregl-popup {
   z-index: 20;
 }
+
+/* Paso a la página de una ruta (components/mountain-loader.tsx): el fondo entra y la montaña se dibuja */
+@keyframes loader-in {
+  from {
+    opacity: 0;
+  }
+}
+@keyframes loader-draw {
+  from {
+    stroke-dashoffset: 1;
+  }
+  to {
+    stroke-dashoffset: 0;
+  }
+}
+@keyframes loader-rise {
+  from {
+    opacity: 0;
+    transform: translateY(10px) scale(0.96);
+  }
+}
+.loader-in {
+  animation: loader-in 160ms ease-out both;
+}
+.loader-rise {
+  animation: loader-rise 420ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+.loader-draw {
+  stroke-dasharray: 1;
+  animation: loader-draw 520ms cubic-bezier(0.65, 0, 0.35, 1) both;
+}
+.loader-draw-late {
+  animation-delay: 140ms;
+}
+@media (prefers-reduced-motion: reduce) {
+  .loader-in,
+  .loader-rise,
+  .loader-draw {
+    animation: none;
+  }
+}
+
+/* "estás aquí" en el mapa del explorador */
+.map-me {
+  width: 18px;
+  height: 18px;
+  border-radius: 9999px;
+  background: #1a73e8;
+  border: 3px solid #fff;
+  box-shadow:
+    0 0 0 6px rgba(26, 115, 232, 0.2),
+    0 1px 4px rgba(0, 0, 0, 0.3);
+}

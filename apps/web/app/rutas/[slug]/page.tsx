@@ -3,19 +3,18 @@ import Image from "next/image";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import clsx from "clsx";
-import { ArrowLeftRight, CalendarPlus, Clock, Download, Map as MapIcon, MapPin, Megaphone, Mountain, Navigation, Ruler, TrendingUp, Users } from "lucide-react";
+import { CalendarPlus, Clock, Download, MapPin, Mountain } from "lucide-react";
 import { Avatar } from "@/components/avatar";
+import { DetailChip, DetailLayout } from "@/components/detail-layout";
 import { FavoriteButton } from "@/components/favorite-button";
 import { OfflineDownload } from "@/components/offline-download";
 import { StartPointMap } from "@/components/route-map-lazy";
 import { RouteFeedback } from "@/components/route-feedback";
-import { RoutePhotos } from "@/components/route-photos";
 import { RouteTrack } from "@/components/route-track";
 import { ShareButton } from "@/components/share-button";
-import { TopNav } from "@/components/top-nav";
 import { TrailConditions } from "@/components/trail-conditions";
-import { ACTIVITY_KEY, mapHref } from "@/lib/route-filters";
-import { ACTIVITY, DIFFICULTY, formatDuration, formatKm, googleMapsDirections, ROUTE_TYPE } from "@/lib/routes";
+import { mapHref } from "@/lib/route-filters";
+import { ACTIVITY, DIFFICULTY, formatDuration, formatKm, ROUTE_TYPE } from "@/lib/routes";
 import { outingDateParts, spotsLabel, type OutingSummary } from "@/lib/outings";
 import { listUpcomingOutings } from "@/lib/outings.server";
 import { personName, profileHref } from "@/lib/profiles";
@@ -58,203 +57,154 @@ export default async function RoutePage({ params }: Props) {
   const cover = route.cover_url ?? community.photos[0]?.url ?? null;
 
   return (
-    <div className="flex min-h-screen flex-col bg-surface-container-low">
-      <TopNav />
-      <main className="mx-auto w-full max-w-7xl flex-1 px-4 py-6 sm:px-6 lg:px-8">
-        <nav aria-label="Ruta de navegación" className="mb-4 flex items-center gap-2 text-xs font-medium text-on-surface-variant">
-          <Link href={route.activity === "hiking" ? "/" : `/?${ACTIVITY_KEY}=${route.activity}`} className="transition-colors hover:text-primary">
-            Mapa
-          </Link>
-          <span className="text-outline-variant">/</span>
-          <span>{route.place_label}</span>
-          <span className="text-outline-variant">/</span>
-          <span className="truncate font-semibold text-on-surface">{route.name}</span>
-        </nav>
-
-        <section className="flex flex-col justify-between gap-4 pb-6 md:flex-row md:items-end">
-          <div className="space-y-2">
-            <h1 className="font-headline text-3xl font-extrabold tracking-tight sm:text-4xl">{route.name}</h1>
-            <p className="flex flex-wrap items-center gap-1.5 text-sm text-on-surface-variant">
-              <span className="rounded-full bg-primary-fixed/60 px-2 py-0.5 text-[11px] font-semibold text-primary">{ACTIVITY[route.activity].label}</span>
-              <MapPin className="size-4 text-outline" aria-hidden />
-              {route.place_label}
+    <DetailLayout
+      actions={
+        <>
+          <ShareButton title={route.name} />
+          <FavoriteButton routeId={route.id} slug={route.slug} variant="detail" />
+        </>
+      }
+      header={
+        <>
+          <div className="flex flex-wrap gap-1.5">
+            <DetailChip>{ACTIVITY[route.activity].label}</DetailChip>
+            <DetailChip>
+              <span className={clsx("size-1.5 rounded-full", difficulty.dot)} />
+              {difficulty.label}
+            </DetailChip>
+          </div>
+          <h1 className="mt-3 font-headline text-[26px] leading-tight font-bold lg:text-[34px]">{route.name}</h1>
+          <p className="mt-1 flex items-center gap-1.5 text-[15px] text-on-surface-variant">
+            <MapPin className="size-4 shrink-0" aria-hidden />
+            {route.place_label}
+          </p>
+          {uploader && (
+            <p className="mt-2 flex items-center gap-1.5 text-xs text-on-surface-variant">
+              <Avatar person={uploader} size={20} className="border-0" />
+              Compartida por
+              <Link href={profileHref(uploader.id)} className="font-semibold text-on-surface hover:text-primary">
+                {personName(uploader)}
+              </Link>
             </p>
-            {uploader && (
-              <p className="flex items-center gap-1.5 text-xs text-on-surface-variant">
-                <Avatar person={uploader} size={20} className="border-0" />
-                Compartida por
-                <Link href={profileHref(uploader.id)} className="font-semibold text-on-surface hover:text-primary">
-                  {personName(uploader)}
-                </Link>
-              </p>
-            )}
-          </div>
-          <div className="flex gap-2">
-            <FavoriteButton routeId={route.id} slug={route.slug} variant="detail" />
-            <ShareButton title={route.name} />
-          </div>
-        </section>
-
-        <section className="relative mb-8 h-[280px] overflow-hidden rounded-2xl border border-outline-variant/60 bg-surface-container shadow-xs sm:h-[380px] md:h-[460px]">
+          )}
+          {/* lo primero que se ve: a esta página se llega desde "Descargar mapa" */}
+          {shape && (
+            <div className="mt-5 flex flex-wrap gap-2">
+              <OfflineDownload
+                route={{
+                  slug: route.slug,
+                  name: route.name,
+                  place_label: route.place_label,
+                  difficulty: route.difficulty,
+                  distance_km: route.distance_km,
+                  elevation_gain_m: route.elevation_gain_m,
+                  duration_min: route.duration_min,
+                  cover_url: route.cover_url,
+                }}
+                line={shape.line}
+                profile={shape.profile}
+              />
+              {shape.gpxUrl && (
+                <a href={shape.gpxUrl} className="inline-flex h-12 items-center gap-1.5 rounded-xl border border-outline-variant px-4 font-headline text-sm font-semibold transition-colors hover:bg-surface-container">
+                  <Download className="size-4" aria-hidden />
+                  GPX
+                </a>
+              )}
+            </div>
+          )}
+        </>
+      }
+      cover={
+        <>
           {cover ? (
-            <Image src={cover} alt={route.name} fill priority sizes="(min-width: 1280px) 1216px, 100vw" className="object-cover" />
+            <Image src={cover} alt={route.name} fill priority sizes="(min-width: 1024px) 720px, 100vw" className="object-cover" />
           ) : (
-            <div className="flex h-full flex-col items-center justify-center gap-2 bg-gradient-to-br from-primary-fixed/50 to-surface-container text-primary-container/70">
+            <div className="flex h-full items-center justify-center bg-gradient-to-br from-primary-container to-primary text-primary-fixed/50">
               <Mountain className="size-14" aria-hidden />
-              <span className="text-sm font-medium">Sin foto todavía</span>
+            </div>
+          )}
+          {/* los datos de la ruta van sobre la foto, con un degradado que los deja leer */}
+          <dl className="absolute inset-x-0 bottom-0 flex flex-wrap gap-x-6 gap-y-2 bg-gradient-to-t from-black/80 via-black/45 to-transparent px-5 pt-16 pb-4 text-white lg:px-6 lg:pb-5">
+            <Stat label="Distancia" value={formatKm(route.distance_km)} />
+            <Stat label="Desnivel" value={`↑ ${route.elevation_gain_m.toLocaleString("es-MX")} m`} />
+            <Stat label="Duración" value={formatDuration(route.duration_min)} />
+            <Stat label="Tipo" value={ROUTE_TYPE[route.route_type]} />
+          </dl>
+        </>
+      }
+      aside={
+        <>
+          <UpcomingOutings outings={outings} />
+          <div>
+            <Link
+              href={`/rutas/${route.slug}/convocar`}
+              className="flex w-full items-center justify-center gap-2 rounded-xl bg-secondary px-4 py-3 font-headline text-sm font-bold text-on-secondary transition-colors hover:bg-on-secondary-container"
+            >
+              <CalendarPlus className="size-5" aria-hidden />
+              Convocar una salida
+            </Link>
+            <p className="mt-2 text-center text-[11px] text-outline">Es gratis y lo organiza la comunidad</p>
+          </div>
+        </>
+      }
+      lead={
+        <section>
+          <div className="mb-4">
+            <h2 className="font-headline text-lg font-bold">{shape ? "Recorrido" : "Punto de inicio"}</h2>
+            <p className="text-[13px] text-on-surface-variant">{shape ? "Recorre el perfil para ubicar cada punto en el mapa" : "Esta ruta todavía no tiene trazo GPX"}</p>
+          </div>
+          {shape ? (
+            <RouteTrack line={shape.line} profile={shape.profile} mapHref={mapHref(route)} />
+          ) : (
+            <div className="relative h-80 overflow-hidden rounded-2xl border border-outline-variant/60 bg-[#e3e8e1] sm:h-96">
+              <StartPointMap lat={route.lat} lng={route.lng} openHref={mapHref(route)} />
             </div>
           )}
         </section>
+      }
+    >
+      {(route.description || route.tags.length > 0) && (
+        <section>
+          <h2 className="font-headline text-lg font-bold">Sobre la ruta</h2>
+          {route.description?.split(/\n{2,}/).map((p, i) => (
+            <p key={i} className="mt-2 text-[15px] leading-relaxed text-on-surface-variant">
+              {p}
+            </p>
+          ))}
+          {route.tags.length > 0 && (
+            <ul className="mt-3 flex flex-wrap gap-2">
+              {route.tags.map((tag) => (
+                <li key={tag} className="rounded-full border border-outline-variant/60 px-2.5 py-0.5 text-[11px] font-medium text-on-surface-variant">
+                  {tag}
+                </li>
+              ))}
+            </ul>
+          )}
+        </section>
+      )}
 
-        <div className="grid grid-cols-1 items-start gap-8 lg:grid-cols-12">
-          <div className="space-y-8 lg:col-span-8">
-            <div className="rounded-2xl border border-outline-variant/70 bg-surface-container-lowest p-5 shadow-xs">
-              <dl className="grid grid-cols-2 gap-4 sm:grid-cols-3 xl:grid-cols-5">
-                <Stat icon={<Ruler className="size-5" />} label="Distancia" value={formatKm(route.distance_km)} />
-                <Stat icon={<TrendingUp className="size-5" />} label="Desnivel" value={`↑ ${route.elevation_gain_m.toLocaleString("es-MX")} m`} />
-                <Stat icon={<Clock className="size-5" />} label="Duración" value={formatDuration(route.duration_min)} />
-                <Stat
-                  icon={<Mountain className="size-5" />}
-                  label="Dificultad"
-                  value={
-                    <span className="flex items-center gap-1.5">
-                      <span className={clsx("size-2.5 rounded-full", difficulty.dot)} />
-                      {difficulty.label}
-                    </span>
-                  }
-                />
-                <Stat icon={<ArrowLeftRight className="size-5" />} label="Tipo" value={ROUTE_TYPE[route.route_type]} />
-              </dl>
-            </div>
+      <TrailConditions route={target} reports={community.reports} />
 
-            <TrailConditions route={target} reports={community.reports} />
-
-            <div className="rounded-2xl border border-outline-variant/70 bg-surface-container-lowest p-6 shadow-xs">
-              <div className="mb-4 flex flex-col justify-between gap-3 sm:flex-row sm:items-center">
-                <div>
-                  <h2 className="flex items-center gap-2 font-headline text-lg font-bold">
-                    <MapIcon className="size-5 text-primary" aria-hidden />
-                    {shape ? "Recorrido" : "Punto de inicio"}
-                  </h2>
-                  <p className="text-xs text-on-surface-variant">
-                    {shape ? "Recorre el perfil para ubicar cada punto en el mapa" : "Esta ruta todavía no tiene trazo GPX"}
-                  </p>
-                </div>
-                <div className="flex flex-wrap gap-2 self-start">
-                  {shape?.gpxUrl && (
-                    <a
-                      href={shape.gpxUrl}
-                      className="inline-flex items-center gap-1.5 rounded-lg border border-outline-variant px-3 py-1.5 text-xs font-semibold transition-colors hover:border-primary-container hover:text-primary"
-                    >
-                      <Download className="size-4" aria-hidden />
-                      Descargar GPX
-                    </a>
-                  )}
-                  <a
-                    href={googleMapsDirections(route.lat, route.lng)}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="inline-flex items-center gap-1.5 rounded-lg bg-primary-container px-3 py-1.5 text-xs font-semibold text-on-primary transition-colors hover:bg-primary"
-                  >
-                    <Navigation className="size-4" aria-hidden />
-                    Cómo llegar
-                  </a>
-                </div>
-              </div>
-              {shape ? (
-                <div className="space-y-5">
-                  <RouteTrack line={shape.line} profile={shape.profile} mapHref={mapHref(route)} />
-                  <OfflineDownload
-                    route={{
-                      slug: route.slug,
-                      name: route.name,
-                      place_label: route.place_label,
-                      difficulty: route.difficulty,
-                      distance_km: route.distance_km,
-                      elevation_gain_m: route.elevation_gain_m,
-                      duration_min: route.duration_min,
-                      cover_url: route.cover_url,
-                    }}
-                    line={shape.line}
-                    profile={shape.profile}
-                  />
-                </div>
-              ) : (
-                <div className="relative h-80 overflow-hidden rounded-xl border border-outline-variant/60 bg-[#e3e8e1] sm:h-96">
-                  <StartPointMap lat={route.lat} lng={route.lng} openHref={mapHref(route)} />
-                </div>
-              )}
-            </div>
-
-            {(route.description || route.tags.length > 0) && (
-              <div className="space-y-4 rounded-2xl border border-outline-variant/70 bg-surface-container-lowest p-6 shadow-xs sm:p-8">
-                <h2 className="font-headline text-xl font-bold">Sobre la ruta</h2>
-                {route.description?.split(/\n{2,}/).map((p, i) => (
-                  <p key={i} className="text-sm leading-relaxed text-on-surface-variant">
-                    {p}
-                  </p>
-                ))}
-                {route.tags.length > 0 && (
-                  <ul className="flex flex-wrap gap-2 pt-1">
-                    {route.tags.map((tag) => (
-                      <li key={tag} className="rounded-full border border-outline-variant/60 bg-surface-container-low px-2.5 py-0.5 text-[11px] font-medium text-on-surface-variant">
-                        {tag}
-                      </li>
-                    ))}
-                  </ul>
-                )}
-              </div>
-            )}
-
-            <RoutePhotos route={target} photos={community.photos} />
-
-            <RouteFeedback route={{ id: route.id, slug: route.slug, created_by: route.created_by }} />
-          </div>
-
-          <aside className="space-y-6 lg:sticky lg:top-24 lg:col-span-4">
-            <UpcomingOutings outings={outings} />
-            <div className="space-y-3 rounded-2xl border border-outline-variant/80 bg-gradient-to-br from-surface-container-lowest to-surface-container-low p-5 text-center shadow-sm">
-              <div className="mx-auto flex size-12 items-center justify-center rounded-full bg-secondary-fixed text-secondary">
-                <Megaphone className="size-6" aria-hidden />
-              </div>
-              <div>
-                <h3 className="font-headline text-base font-bold">¿No encuentras una fecha?</h3>
-                <p className="mt-1 text-xs text-on-surface-variant">Organiza tu propio grupo y los senderistas locales se unirán</p>
-              </div>
-              <Link
-                href={`/rutas/${route.slug}/convocar`}
-                className="flex w-full items-center justify-center gap-2 rounded-xl bg-secondary px-4 py-3 font-headline text-sm font-bold text-on-secondary shadow-md transition-all hover:bg-on-secondary-container active:scale-95"
-              >
-                <CalendarPlus className="size-5" aria-hidden />
-                Convocar una salida
-              </Link>
-              <p className="text-[11px] text-outline">Es gratis y lo organiza la comunidad</p>
-            </div>
-          </aside>
-        </div>
-      </main>
-    </div>
+      <RouteFeedback route={{ id: route.id, slug: route.slug, created_by: route.created_by }} />
+    </DetailLayout>
   );
 }
 
-function Stat({ icon, label, value }: { icon: React.ReactNode; label: string; value: React.ReactNode }) {
+function Stat({ label, value }: { label: string; value: string }) {
   return (
-    <div className="flex items-center gap-3">
-      <div className="flex size-10 shrink-0 items-center justify-center rounded-xl bg-surface-container text-primary">{icon}</div>
-      <div>
-        <dt className="text-[11px] font-semibold tracking-wider text-on-surface-variant uppercase">{label}</dt>
-        <dd className="font-headline text-lg font-bold">{value}</dd>
-      </div>
+    <div>
+      <dt className="text-[11px] font-semibold tracking-wider text-white/75 uppercase">{label}</dt>
+      <dd className="font-headline text-lg leading-tight font-bold">{value}</dd>
     </div>
   );
 }
 
 function UpcomingOutings({ outings }: { outings: OutingSummary[] }) {
   return (
-    <div className="space-y-4 rounded-2xl border border-outline-variant/80 bg-surface-container-lowest p-5 shadow-sm">
-      <div className="flex items-center justify-between border-b border-outline-variant/40 pb-3">
+    <div className="space-y-3">
+      <div className="flex items-center justify-between">
         <div>
-          <h3 className="font-headline text-base font-bold">Próximas salidas en grupo</h3>
+          <h2 className="font-headline text-base font-bold">Próximas salidas en grupo</h2>
           <p className="text-xs text-on-surface-variant">Súmate a grupos que van a esta ruta</p>
         </div>
         {outings.length > 0 && (
@@ -303,10 +253,7 @@ function UpcomingOutings({ outings }: { outings: OutingSummary[] }) {
           })}
         </ul>
       ) : (
-        <div className="flex flex-col items-center gap-2 py-4 text-center">
-          <Users className="size-8 text-outline-variant" aria-hidden />
-          <p className="text-sm text-on-surface-variant">Nadie ha convocado una salida a esta ruta todavía.</p>
-        </div>
+        <p className="text-sm text-on-surface-variant">Nadie ha convocado una salida a esta ruta todavía.</p>
       )}
     </div>
   );

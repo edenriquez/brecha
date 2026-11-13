@@ -1,39 +1,27 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
-import type { LineString } from "geojson";
-import Image from "next/image";
-import Link from "next/link";
+import { useCallback, useEffect, useMemo, useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
+import type { LineString } from "geojson";
 import clsx from "clsx";
-import {
-  Bike,
-  CalendarDays,
-  CarFront,
-  ChevronRight,
-  CircleCheck,
-  Footprints,
-  List,
-  Map as MapIcon,
-  MapPinned,
-  Mountain,
-  Navigation,
-  Route,
-  Search,
-  X,
-} from "lucide-react";
+import { Bike, CalendarDays, CarFront, CircleCheck, Footprints, List, Map as MapIcon, MapPinned, Navigation, Route, Search, X } from "lucide-react";
+import { MountainLoader } from "@/components/mountain-loader";
 import { OutingCard } from "@/components/outing-card";
 import { RouteCard } from "@/components/route-card";
 import { RouteMap } from "@/components/route-map-lazy";
+import { RoutePanel } from "@/components/route-panel";
 import { SearchBox } from "@/components/search-box";
 import { TopNav } from "@/components/top-nav";
 import {
   ACTIVITY_KEY,
   AREA_KEY,
+  CATEGORIES,
+  CATEGORY_KEY,
   countPanelFilters,
   DIFFICULTY_KEY,
   formatArea,
   inArea,
+  matchesCategory,
   matchesFilters,
   matchesQuery,
   parseActivity,
@@ -45,23 +33,29 @@ import {
   TYPE_KEY,
   type Area,
 } from "@/lib/route-filters";
-import { ACTIVITY, DIFFICULTY, formatDuration, formatKm, type Activity, type Difficulty, type RouteSummary } from "@/lib/routes";
+import { ACTIVITY, type Activity, type RouteSummary } from "@/lib/routes";
 import type { ProfilePoint } from "@/lib/gpx";
 import type { LineCoords } from "@/lib/maplibre";
 import type { OutingCardData } from "@/lib/outings";
 import { createClient } from "@/lib/supabase/client";
 import { useUrlParams } from "@/lib/use-url-params";
 
-const DIFFICULTIES: Difficulty[] = ["facil", "moderada", "dificil"];
 /** El breakpoint `lg` de Tailwind: desde ahí la lista y el mapa se ven lado a lado. */
 const SIDE_BY_SIDE = "(min-width: 1024px)";
-const CLEARED = Object.fromEntries([QUERY_KEY, DIFFICULTY_KEY, TYPE_KEY, AREA_KEY, ...RANGE_KEYS].map((k) => [k, null]));
+const CLEARED = Object.fromEntries([QUERY_KEY, CATEGORY_KEY, DIFFICULTY_KEY, TYPE_KEY, AREA_KEY, ...RANGE_KEYS].map((k) => [k, null]));
 const ACTIVITY_ICON: Record<Activity, React.ReactNode> = {
   hiking: <Footprints className="size-5" />,
   bici: <Bike className="size-5" />,
   offroad: <CarFront className="size-5" />,
 };
 
+type Details = { line: LineCoords | null; profile: ProfilePoint[] | null; description: string | null };
+
+/**
+ * Lista y mapa, con el modelo de entrelugares: en escritorio la lista va a la izquierda y el mapa fijo a la derecha;
+ * elegir una ruta (tarjeta o pin) abre su detalle en el lugar de la lista. En móvil se ve la lista o el mapa.
+ * Con una ruta elegida el mapa es solo de ella y "Descargar mapa" lleva a su página.
+ */
 export function Explorer({ routes: allRoutes, outings: allOutings }: { routes: RouteSummary[]; outings: OutingCardData[] }) {
   const [params, setParams] = useUrlParams();
   const activity = parseActivity(params.get(ACTIVITY_KEY));
@@ -71,12 +65,14 @@ export function Explorer({ routes: allRoutes, outings: allOutings }: { routes: R
     return allOutings.filter((o) => ids.has(o.route.id));
   }, [allOutings, routes]);
   const query = params.get(QUERY_KEY) ?? "";
-  const difficulty = params.get(DIFFICULTY_KEY);
+  const category = CATEGORIES.find((c) => c.id === params.get(CATEGORY_KEY))?.id ?? null;
+  // solo las categorías que tienen alguna ruta
+  const categories = useMemo(() => CATEGORIES.filter((c) => routes.some((r) => matchesCategory(r, c.id))), [routes]);
   const tab = params.get("ver") === "salidas" ? "salidas" : "rutas";
   const areaParam = params.get(AREA_KEY);
   const area = useMemo(() => parseArea(areaParam), [areaParam]);
-  // rangos y tipo no tienen controles aquí, pero un enlace puede traerlos
-  const filtering = Boolean(query.trim() || difficulty || countPanelFilters(params) || area);
+  // dificultad, rangos y tipo no tienen controles aquí, pero un enlace puede traerlos
+  const filtering = Boolean(query.trim() || category || params.get(DIFFICULTY_KEY) || countPanelFilters(params) || area);
   // lo que se ve tras mover el mapa a mano; con él aparece "Buscar en esta zona"
   const [moved, setMoved] = useState<Area | null>(null);
   const canSearchArea = moved !== null && (!area || formatArea(moved) !== formatArea(area));
@@ -84,6 +80,16 @@ export function Explorer({ routes: allRoutes, outings: allOutings }: { routes: R
   const [view, setView] = useState<"lista" | "mapa">("lista");
   // en ambas pestañas la selección es una ruta: es lo que tiene pin en el mapa
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  // la lista y el detalle comparten columna: al cerrar el detalle la lista vuelve a donde estaba
+  const pane = useRef<HTMLElement>(null);
+  const listScroll = useRef(0);
+  function select(id: string | null) {
+    if (!selectedId && pane.current) listScroll.current = pane.current.scrollTop;
+    setSelectedId(id);
+  }
+  useEffect(() => {
+    if (pane.current) pane.current.scrollTop = selectedId ? 0 : listScroll.current;
+  }, [selectedId]);
 
   // llega desde "Abrir en el mapa" de una ruta: la elige (en móvil enseña el mapa) y limpia la URL
   const routeParam = params.get(ROUTE_KEY);
@@ -122,128 +128,149 @@ export function Explorer({ routes: allRoutes, outings: allOutings }: { routes: R
     return filtered.filter((r) => withOutings.has(r.id));
   }, [tab, matching, filtered, matchingOutings]);
   const selected = mapRoutes.find((r) => r.id === selectedId) ?? null;
-  const router = useRouter();
 
-  // el trazo y el perfil de la ruta elegida se piden al seleccionarla: el listado no carga los de todas
-  const [shapes, setShapes] = useState<Record<string, { line: LineCoords; profile: ProfilePoint[] | null } | null>>({});
+  // el trazo, el perfil y la descripción de la ruta elegida se piden al seleccionarla: el listado no carga los de todas
+  const [details, setDetails] = useState<Record<string, Details>>({});
+  const requested = useRef(new Set<string>());
+  // también se adelanta al pasar el cursor por la tarjeta o el pin, para que el recorrido arranque sin esperar
+  const loadDetails = useCallback((id: string) => {
+    if (requested.current.has(id)) return;
+    requested.current.add(id);
+    const supabase = createClient();
+    Promise.all([
+      supabase.from("route_shapes").select("track, elevation_profile").eq("id", id).maybeSingle(),
+      supabase.from("routes_feed").select("description").eq("id", id).maybeSingle(),
+    ]).then(([shape, route]) => {
+      const line = (shape.data?.track as LineString | undefined)?.coordinates as LineCoords | undefined;
+      const profile = shape.data?.elevation_profile as ProfilePoint[] | null | undefined;
+      setDetails((d) => ({
+        ...d,
+        [id]: { line: line ?? null, profile: line && profile && profile.length > 1 ? profile : null, description: (route.data?.description as string | null | undefined) ?? null },
+      }));
+    });
+  }, []);
   useEffect(() => {
-    if (!selectedId || selectedId in shapes) return;
-    createClient()
-      .from("route_shapes")
-      .select("track, elevation_profile")
-      .eq("id", selectedId)
-      .maybeSingle()
-      .then(({ data }) => {
-        const line = (data?.track as LineString | undefined)?.coordinates as LineCoords | undefined;
-        const profile = data?.elevation_profile as ProfilePoint[] | null | undefined;
-        setShapes((s) => ({ ...s, [selectedId]: line ? { line, profile: profile && profile.length > 1 ? profile : null } : null }));
-      });
-  }, [selectedId, shapes]);
-  const shape = selected ? shapes[selected.id] : null;
-  const [touring, setTouring] = useState(false);
+    if (selectedId) loadDetails(selectedId);
+  }, [selectedId, loadDetails]);
+  const detail = selected ? details[selected.id] : undefined;
 
-  // primer clic en un pin lo selecciona; el segundo abre la ruta
-  function selectOrOpen(id: string) {
-    if (id !== selectedId) return setSelectedId(id);
-    const route = routes.find((r) => r.id === id);
-    if (route) router.push(`/rutas/${route.slug}`);
-  }
-
-  // igual desde las tarjetas: el primer clic enfoca la ruta en el mapa y el segundo la abre.
-  // En móvil la lista tapa el mapa, así que ahí la tarjeta abre directo.
-  function focusOnMap(id: string) {
-    if (id === selectedId || !window.matchMedia(SIDE_BY_SIDE).matches) return false;
-    setSelectedId(id);
+  // las tarjetas abren el detalle junto al mapa; en móvil la lista tapa el mapa, así que ahí abren la página
+  function openBesideMap(id: string) {
+    if (!window.matchMedia(SIDE_BY_SIDE).matches) return false;
+    select(id);
     return true;
   }
 
-  function toggle(key: string, value: string) {
-    setParams({ [key]: params.get(key) === value ? null : value });
+  // "Descargar mapa": la montaña se dibuja un instante y sigue en pantalla hasta que la página de la ruta está lista
+  const router = useRouter();
+  const [leaving, setLeaving] = useState(false);
+  const [, startNavigation] = useTransition();
+  useEffect(() => {
+    if (selected) router.prefetch(`/rutas/${selected.slug}`);
+  }, [selected, router]);
+  function openRoutePage() {
+    if (!selected || leaving) return;
+    setLeaving(true);
+    const href = `/rutas/${selected.slug}`;
+    setTimeout(() => startNavigation(() => router.push(href)), 450);
   }
 
   return (
     <>
-      <TopNav search={<SearchBox value={query} onChange={(q) => setParams({ [QUERY_KEY]: q || null })} />} />
+      <TopNav
+        search={
+          // en móvil, sobre el mapa el buscador va en la píldora del propio mapa
+          <div className={clsx("min-w-0 flex-1", view === "mapa" && "max-lg:hidden")}>
+            <SearchBox value={query} onChange={(q) => setParams({ [QUERY_KEY]: q || null })} />
+          </div>
+        }
+      />
       <main className="relative flex flex-1 overflow-hidden">
-        <section
-          className={clsx(
-            "@container h-full w-full overflow-y-auto bg-surface-container-low px-4 py-4 sm:px-6 lg:block lg:w-[560px] lg:shrink-0 lg:px-4 xl:w-[620px]",
-            view === "mapa" && "hidden",
+        <section ref={pane} className={clsx("@container h-full w-full overflow-y-auto bg-surface px-3 py-4 sm:px-4 lg:block lg:w-auto lg:min-w-0 lg:flex-1", view === "mapa" && "hidden")}>
+          {selected && (
+            <div className="hidden lg:block">
+              <RoutePanel route={selected} description={detail?.description} outings={outings.filter((o) => o.route.id === selected.id)} onBack={() => select(null)} />
+            </div>
           )}
-        >
-          <p className="mb-3 inline-flex items-center gap-1.5 text-xs font-semibold text-primary-container">
-            <Navigation className="size-3.5 fill-primary-container" aria-hidden />
-            Rutas cerca de Ciudad de México
-          </p>
+          <div className={clsx(selected && "lg:hidden")}>
+            <div className="px-2">
+              <p className="mb-3 inline-flex items-center gap-1.5 text-xs font-semibold text-primary-container">
+                <Navigation className="size-3.5 fill-primary-container" aria-hidden />
+                Rutas cerca de Ciudad de México
+              </p>
 
-          <div className="mb-3 grid grid-cols-3 gap-2">
-            {(Object.keys(ACTIVITY) as Activity[]).map((a) => (
-              <ActivityTile
-                key={a}
-                icon={ACTIVITY_ICON[a]}
-                title={ACTIVITY[a].label}
-                subtitle={ACTIVITY[a].subtitle}
-                enabled={ACTIVITY[a].enabled}
-                active={a === activity}
-                onClick={() => {
-                  setSelectedId(null);
-                  setParams({ [ACTIVITY_KEY]: a === "hiking" ? null : a });
-                }}
-              />
-            ))}
-          </div>
+              <div className="mb-3 grid grid-cols-3 gap-2">
+                {(Object.keys(ACTIVITY) as Activity[]).map((a) => (
+                  <ActivityTile
+                    key={a}
+                    icon={ACTIVITY_ICON[a]}
+                    title={ACTIVITY[a].label}
+                    subtitle={ACTIVITY[a].subtitle}
+                    enabled={ACTIVITY[a].enabled}
+                    active={a === activity}
+                    onClick={() => {
+                      select(null);
+                      setParams({ [ACTIVITY_KEY]: a === "hiking" ? null : a, [CATEGORY_KEY]: null });
+                    }}
+                  />
+                ))}
+              </div>
 
-          <div role="tablist" className="mb-3 flex items-center rounded-full border border-outline-variant/50 bg-surface-container p-1">
-            <Tab active={tab === "rutas"} onClick={() => setParams({ ver: null })}>
-              <Route className="size-4" aria-hidden />
-              Rutas
-            </Tab>
-            <Tab active={tab === "salidas"} onClick={() => setParams({ ver: "salidas" })}>
-              <CalendarDays className="size-4" aria-hidden />
-              Salidas próximas
-              {outings.length > 0 && <span className="rounded-full bg-secondary px-1.5 text-[10px] font-bold text-on-secondary">{outings.length}</span>}
-            </Tab>
-          </div>
+              <div role="tablist" className="mb-3 flex items-center rounded-full border border-outline-variant/50 bg-surface-container p-1">
+                <Tab active={tab === "rutas"} onClick={() => setParams({ ver: null })}>
+                  <Route className="size-4" aria-hidden />
+                  Rutas
+                </Tab>
+                <Tab active={tab === "salidas"} onClick={() => setParams({ ver: "salidas" })}>
+                  <CalendarDays className="size-4" aria-hidden />
+                  Salidas próximas
+                  {outings.length > 0 && <span className="rounded-full bg-secondary px-1.5 text-[10px] font-bold text-on-secondary">{outings.length}</span>}
+                </Tab>
+              </div>
 
-          <div className="no-scrollbar mb-3 flex items-center gap-2 overflow-x-auto py-1">
-            {area && (
-              <>
-                <Chip active onClick={() => setParams({ [AREA_KEY]: null })}>
-                  <MapPinned className="size-3.5" aria-hidden />
-                  Zona del mapa
-                  <X className="size-3.5" aria-label="Quitar" />
+              <div className="no-scrollbar -mx-2 flex items-center gap-2 overflow-x-auto px-2 py-1">
+                {area && (
+                  <>
+                    <Chip active onClick={() => setParams({ [AREA_KEY]: null })}>
+                      <MapPinned className="size-4" aria-hidden />
+                      Zona del mapa
+                      <X className="size-4" aria-label="Quitar" />
+                    </Chip>
+                    <span className="mx-1 h-5 w-px shrink-0 bg-outline-variant" aria-hidden />
+                  </>
+                )}
+                <Chip active={!category} onClick={() => setParams({ [CATEGORY_KEY]: null })}>
+                  Todo
                 </Chip>
-                <span className="mx-1 h-5 w-px shrink-0 bg-outline-variant" aria-hidden />
-              </>
-            )}
-            <Chip active={!difficulty} onClick={() => setParams({ [DIFFICULTY_KEY]: null })}>
-              Todo
-            </Chip>
-            {DIFFICULTIES.map((d) => (
-              <Chip key={d} active={difficulty === d} onClick={() => toggle(DIFFICULTY_KEY, d)}>
-                <span className={clsx("size-2 rounded-full", DIFFICULTY[d].dot)} />
-                {DIFFICULTY[d].label}
-              </Chip>
-            ))}
-          </div>
+                {categories.map((c) => (
+                  <Chip key={c.id} active={category === c.id} onClick={() => setParams({ [CATEGORY_KEY]: category === c.id ? null : c.id })}>
+                    {c.label}
+                  </Chip>
+                ))}
+              </div>
 
-          <div className="mb-3 flex items-baseline justify-between gap-3">
-            <h2 className="font-headline text-sm font-bold">
-              {tab === "rutas" ? routesHeading(visible.length, routes.length, filtering) : outingsHeading(visibleOutings.length, outings.length, filtering)}
-            </h2>
-            {filtering && (
-              <button type="button" onClick={() => setParams(CLEARED)} className="shrink-0 text-xs font-semibold text-primary hover:underline">
-                Limpiar filtros
-              </button>
-            )}
-          </div>
+              <div className="flex items-end justify-between gap-3 pt-5 pb-2">
+                <div>
+                  <h2 className="font-headline text-[22px] leading-tight font-bold">{tab === "rutas" ? "Rutas" : "Salidas próximas"}</h2>
+                  <p className="mt-0.5 text-[13px] text-on-surface-variant">
+                    {tab === "rutas" ? routesHeading(visible.length, routes.length, filtering) : outingsHeading(visibleOutings.length, outings.length, filtering)}
+                  </p>
+                </div>
+                {filtering && (
+                  <button type="button" onClick={() => setParams(CLEARED)} className="shrink-0 text-xs font-semibold text-primary hover:underline">
+                    Limpiar filtros
+                  </button>
+                )}
+              </div>
+            </div>
 
-          {tab === "rutas" ? (
-            <div className="space-y-4 pb-24 lg:pb-6">
-              {visible.length ? (
-                <div className="grid grid-cols-2 gap-3 @lg:grid-cols-3">
+            {tab === "rutas" ? (
+              visible.length ? (
+                <div className={CARDS}>
                   {visible.map((route, i) => (
-                    <RouteCard key={route.id} route={route} compact priority={i < 4} selected={route.id === selectedId} onSelect={() => focusOnMap(route.id)} />
+                    <div key={route.id} onPointerEnter={() => loadDetails(route.id)}>
+                      <RouteCard route={route} priority={i < 2} onSelect={() => openBesideMap(route.id)} />
+                    </div>
                   ))}
                 </div>
               ) : (
@@ -257,50 +284,57 @@ export function Explorer({ routes: allRoutes, outings: allOutings }: { routes: R
                         : `Todavía no hay rutas ${ACTIVITY[activity].label.toLowerCase()} publicadas.`}{" "}
                   {filtering && <ClearLink onClick={() => setParams(CLEARED)} />}
                 </Empty>
-              )}
-            </div>
-          ) : visibleOutings.length ? (
-            <div className="grid grid-cols-1 gap-3 pb-24 @xl:grid-cols-2 lg:pb-6">
-              {visibleOutings.map((outing) => (
-                <OutingCard key={outing.id} outing={outing} selected={outing.route.id === selectedId} onSelect={() => focusOnMap(outing.route.id)} />
-              ))}
-            </div>
-          ) : (
-            <Empty>
-              {filtering ? (
-                <>
-                  Ninguna salida coincide con tu búsqueda. <ClearLink onClick={() => setParams(CLEARED)} />
-                </>
-              ) : (
-                <>
-                  Nadie ha convocado una salida todavía.{" "}
-                  <button type="button" onClick={() => setParams({ ver: null })} className="font-semibold text-primary underline-offset-2 hover:underline">
-                    Elige una ruta
-                  </button>{" "}
-                  y convoca la primera.
-                </>
-              )}
-            </Empty>
-          )}
+              )
+            ) : visibleOutings.length ? (
+              <div className={CARDS}>
+                {visibleOutings.map((outing) => (
+                  <OutingCard key={outing.id} outing={outing} onSelect={() => openBesideMap(outing.route.id)} />
+                ))}
+              </div>
+            ) : (
+              <Empty>
+                {filtering ? (
+                  <>
+                    Ninguna salida coincide con tu búsqueda. <ClearLink onClick={() => setParams(CLEARED)} />
+                  </>
+                ) : (
+                  <>
+                    Nadie ha convocado una salida todavía.{" "}
+                    <button type="button" onClick={() => setParams({ ver: null })} className="font-semibold text-primary underline-offset-2 hover:underline">
+                      Elige una ruta
+                    </button>{" "}
+                    y convoca la primera.
+                  </>
+                )}
+              </Empty>
+            )}
+          </div>
         </section>
 
         <section
           className={clsx(
-            "relative h-full w-full overflow-hidden bg-[#e3e8e1] lg:block lg:w-auto lg:flex-1 lg:border-l lg:border-outline-variant/50",
+            "relative h-full w-full overflow-hidden bg-[#e3e8e1] lg:block lg:w-[42%] lg:min-w-[440px] lg:shrink-0 lg:border-l lg:border-outline-variant/50",
             view === "lista" && "hidden",
           )}
         >
           <RouteMap
             routes={mapRoutes}
             selectedId={selectedId}
-            onSelect={selectOrOpen}
-            track={shape === undefined ? undefined : (shape?.line ?? null)}
-            profile={shape?.profile ?? null}
+            onSelect={select}
+            track={detail ? detail.line : undefined}
+            profile={detail?.profile ?? null}
             area={area}
             onUserMove={setMoved}
-            onTourChange={setTouring}
+            mode={tab}
+            onMode={(mode) => setParams({ ver: mode === "salidas" ? "salidas" : null })}
+            outingCount={outings.length}
+            query={query}
+            onQuery={(q) => setParams({ [QUERY_KEY]: q || null })}
+            onBack={() => select(null)}
+            onDownload={openRoutePage}
+            onPeek={loadDetails}
           />
-          {canSearchArea && !touring && (
+          {canSearchArea && !selected && (
             <button
               type="button"
               onClick={() => {
@@ -309,15 +343,17 @@ export function Explorer({ routes: allRoutes, outings: allOutings }: { routes: R
                 setMoved(null);
                 setView("lista");
               }}
-              className="absolute top-4 left-1/2 z-10 flex -translate-x-1/2 items-center gap-2 rounded-full bg-surface-container-lowest px-4 py-2 font-headline text-sm font-semibold text-on-surface shadow-lg ring-1 ring-outline-variant/60 transition-transform hover:scale-105 active:scale-95"
+              // debajo del buscador y el selector del mapa
+              className="absolute top-[116px] left-1/2 z-10 flex -translate-x-1/2 items-center gap-2 rounded-full bg-surface-container-lowest px-4 py-2 font-headline text-sm font-semibold whitespace-nowrap text-on-surface shadow-lg ring-1 ring-outline-variant/60 transition-transform hover:scale-105 active:scale-95"
             >
               <Search className="size-4 text-primary" aria-hidden />
               Buscar en esta zona
             </button>
           )}
-          {selected && !touring && <MapPeek route={selected} />}
         </section>
 
+        {/* con una ruta elegida el mapa es solo de ella: se vuelve con su botón de regreso */}
+        {!(selected && view === "mapa") && (
         <button
           type="button"
           onClick={() => setView((v) => (v === "lista" ? "mapa" : "lista"))}
@@ -326,10 +362,15 @@ export function Explorer({ routes: allRoutes, outings: allOutings }: { routes: R
           {view === "lista" ? <MapIcon className="size-4" aria-hidden /> : <List className="size-4" aria-hidden />}
           {view === "lista" ? "Ver mapa" : "Ver lista"}
         </button>
+        )}
       </main>
+      {leaving && <MountainLoader />}
     </>
   );
 }
+
+/** Una columna en teléfono; dos o tres según el ancho de la columna de la lista. */
+const CARDS = "grid grid-cols-1 gap-x-1 gap-y-2 pb-24 @xl:grid-cols-2 @5xl:grid-cols-3 lg:pb-6";
 
 function routesHeading(shown: number, total: number, filtering: boolean) {
   if (filtering) return `${shown} de ${total} ${total === 1 ? "ruta" : "rutas"}`;
@@ -338,34 +379,7 @@ function routesHeading(shown: number, total: number, filtering: boolean) {
 
 function outingsHeading(shown: number, total: number, filtering: boolean) {
   if (filtering) return `${shown} de ${total} ${total === 1 ? "salida" : "salidas"}`;
-  return shown === 1 ? "1 salida próxima" : `${shown} salidas próximas`;
-}
-
-/** Ficha de la ruta seleccionada sobre el mapa; solo en móvil, donde no hay lista al lado. */
-function MapPeek({ route }: { route: RouteSummary }) {
-  return (
-    <Link
-      href={`/rutas/${route.slug}`}
-      className="absolute inset-x-3 bottom-20 z-10 flex items-center gap-3 rounded-2xl bg-surface-container-lowest p-2.5 shadow-lg ring-1 ring-outline-variant/50 lg:hidden"
-    >
-      <div className="relative size-16 shrink-0 overflow-hidden rounded-xl bg-surface-container">
-        {route.cover_url ? (
-          <Image src={route.cover_url} alt="" fill sizes="64px" className="object-cover" />
-        ) : (
-          <Mountain className="absolute inset-0 m-auto size-6 text-primary-container/70" aria-hidden />
-        )}
-      </div>
-      <div className="min-w-0 flex-1">
-        <p className="truncate text-[11px] font-medium text-on-surface-variant">{route.place_label}</p>
-        <p className="truncate font-headline text-sm font-bold">{route.name}</p>
-        <p className="mt-0.5 flex items-center gap-1.5 text-xs text-on-surface-variant">
-          <span className={clsx("size-1.5 rounded-full", DIFFICULTY[route.difficulty].dot)} />
-          {formatKm(route.distance_km)} · ↑ {route.elevation_gain_m.toLocaleString("es-MX")} m · {formatDuration(route.duration_min)}
-        </p>
-      </div>
-      <ChevronRight className="size-5 shrink-0 text-outline" aria-hidden />
-    </Link>
-  );
+  return shown === 1 ? "1 salida convocada" : `${shown} salidas convocadas`;
 }
 
 function Chip({ active, onClick, children }: { active: boolean; onClick: () => void; children: React.ReactNode }) {
@@ -375,10 +389,8 @@ function Chip({ active, onClick, children }: { active: boolean; onClick: () => v
       onClick={onClick}
       aria-pressed={active}
       className={clsx(
-        "flex shrink-0 items-center gap-1.5 rounded-full px-3 py-1 text-xs transition-colors",
-        active
-          ? "bg-primary font-headline font-semibold text-on-primary shadow-xs"
-          : "border border-outline-variant/70 bg-surface-container-lowest font-medium hover:border-primary",
+        "inline-flex h-9 shrink-0 items-center gap-1.5 rounded-full border px-4 text-sm font-medium transition-colors",
+        active ? "border-on-surface bg-on-surface text-surface" : "border-outline-variant bg-surface-container-lowest text-on-surface hover:border-on-surface",
       )}
     >
       {children}
@@ -462,5 +474,5 @@ function ClearLink({ onClick }: { onClick: () => void }) {
 }
 
 function Empty({ children }: { children: React.ReactNode }) {
-  return <p className="rounded-xl border border-dashed border-outline-variant p-8 text-center text-sm text-on-surface-variant">{children}</p>;
+  return <p className="mx-2 rounded-xl border border-dashed border-outline-variant p-8 text-center text-sm text-on-surface-variant">{children}</p>;
 }
