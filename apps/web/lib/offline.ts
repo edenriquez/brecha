@@ -362,16 +362,19 @@ export async function downloadRoute(
   const lidar = options.lidar ? await lidarTiles(cells, signal) : [];
   if (tiles.length + lidar.length > MAX_TILES) throw new Error("La ruta es demasiado extensa para guardarla sin conexión.");
 
-  // el registro va antes de bajar: si se corta, la ruta queda incompleta y sus teselas se pueden borrar
+  // el registro va antes de bajar: si se corta, sus teselas se pueden borrar (una ruta nueva queda incompleta)
   const saveRecord = async (record: OfflineRoute) =>
     (await routesCache()).put(ROUTE_KEY + encodeURIComponent(route.slug), new Response(JSON.stringify(record), { headers: { "Content-Type": "application/json" } }));
+  // ampliación: la ruta ya estaba completa; si se corta, sigue completa con lo anterior
+  const extending = !!prev && prev.complete !== false;
   // al reanudar se parte de lo ya bajado: las teselas en cache se saltan
   let bytes = prev?.complete === false ? prev.bytes : 0;
   const record: OfflineRoute = {
     ...route,
     line,
     profile,
-    tiles: [...tiles.map(tileCacheKey), ...lidar.map((t) => t.key)],
+    // al ampliar se suman las anteriores: al borrar la ruta no quedan huérfanas las que alcanzaron a bajar
+    tiles: [...new Set([...(extending ? prev.tiles : []), ...tiles.map(tileCacheKey), ...lidar.map((t) => t.key)])],
     bytes,
     savedAt: new Date().toISOString(),
     complete: false,
@@ -379,7 +382,9 @@ export async function downloadRoute(
     cells,
     options,
   };
-  await saveRecord(record);
+  // mientras amplía, el registro guardado es el anterior (radio, celdas y opciones) con las teselas nuevas
+  const progressRecord = (b: number): OfflineRoute => (extending ? { ...prev, tiles: record.tiles, bytes: prev.bytes + b } : { ...record, bytes: b });
+  await saveRecord(progressRecord(bytes));
   const storage = await navigator.storage?.estimate?.().catch(() => undefined);
   if (storage?.quota !== undefined && storage.usage !== undefined && storage.quota - storage.usage < estimateDownload(line, radiusKm, options, zone).mb * 1024 * 1024) {
     throw new Error("No hay espacio suficiente en el dispositivo");
@@ -424,7 +429,7 @@ export async function downloadRoute(
     signal.throwIfAborted();
   } catch (e) {
     // cortada o con error: se guarda lo bajado para que Reanudar sume
-    await saveRecord({ ...record, bytes });
+    await saveRecord(progressRecord(bytes));
     throw e;
   }
   const saved: OfflineRoute = { ...record, bytes, complete: true };

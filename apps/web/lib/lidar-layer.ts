@@ -102,16 +102,17 @@ export function onClickShow<T>(map: maplibregl.Map, layer: string, content: (pro
   map.on("mouseleave", layer, () => (map.getCanvas().style.cursor = ""));
 }
 
-// el velo de la zona descargada (lib/coverage-layer.ts) también queda encima de los relieves
-const LINE_LAYERS = ["coverage-veil", "view-zones", "streams-main", "streams-minor", "roads-casing", "roads", "lidar-coverage"];
+const LINE_LAYERS = ["view-zones", "streams-main", "streams-minor", "roads-casing", "roads", "lidar-coverage"];
+// el velo de la zona descargada (lib/coverage-layer.ts): relieves y líneas quedan siempre debajo
+const VEIL = "coverage-veil";
 const POINT_LAYERS = ["lidar-candidates", "lidar-findings", "waterfalls", "viewpoints", "camps"];
 
 /**
  * Dónde insertar relieves y líneas para que, sin importar el orden en que se prendan, queden debajo del
- * trazo de la ruta (o de las etiquetas) y los relieves debajo de las líneas. Los puntos van encima de todo.
+ * trazo de la ruta (o de las etiquetas) y del velo de la zona, y los relieves debajo de las líneas. Los puntos van encima de todo.
  */
 export function overlayAnchor(map: maplibregl.Map, kind: "raster" | "lines") {
-  const above = new Set(kind === "raster" ? [...LINE_LAYERS, ...POINT_LAYERS] : POINT_LAYERS);
+  const above = new Set([VEIL, ...(kind === "raster" ? LINE_LAYERS : []), ...POINT_LAYERS]);
   const hasTrack = !!map.getLayer("track-casing");
   return map.getStyle().layers?.find((l) => above.has(l.id) || (hasTrack ? l.id === "track-casing" : l.type === "symbol"))?.id;
 }
