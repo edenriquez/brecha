@@ -1,6 +1,6 @@
 "use client";
 
-import { useSyncExternalStore } from "react";
+import { useEffect, useSyncExternalStore } from "react";
 import { DEM_TILES } from "@/lib/dem";
 import type { ProfilePoint } from "@/lib/gpx";
 import { MAP_STYLE, SATELLITE_TILES } from "@/lib/map-sources";
@@ -11,10 +11,12 @@ const MAP_CACHE = "brecha-mapas";
 const STYLE_CACHE = "brecha-estilo";
 const ROUTES_CACHE = "brecha-rutas";
 const ROUTE_KEY = "/__descargas/";
+// portada de cada ruta, en el mismo cache pero fuera de las llaves que lee el service worker
+const COVER_KEY = "/__portadas/";
 
 type LineCoords = [number, number][];
 
-export type OfflineRouteInfo = Pick<RouteSummary, "slug" | "name" | "place_label" | "difficulty" | "distance_km" | "elevation_gain_m" | "duration_min">;
+export type OfflineRouteInfo = Pick<RouteSummary, "slug" | "name" | "place_label" | "difficulty" | "distance_km" | "elevation_gain_m" | "duration_min" | "cover_url">;
 
 export type OfflineRoute = OfflineRouteInfo & {
   line: LineCoords;
@@ -23,6 +25,8 @@ export type OfflineRoute = OfflineRouteInfo & {
   tiles: string[];
   bytes: number;
   savedAt: string;
+  /** false mientras baja o si se cortó; los registros viejos no lo traen y cuentan como completos */
+  complete?: boolean;
 };
 
 /** El visor sin conexión no deja alejarse ni acercarse más allá de lo descargado. */
@@ -200,7 +204,8 @@ async function routesCache() {
 
 export async function listOfflineRoutes(): Promise<OfflineRoute[]> {
   const cache = await routesCache();
-  const routes = await Promise.all((await cache.keys()).map(async (req) => (await cache.match(req))!.json() as Promise<OfflineRoute>));
+  const keys = (await cache.keys()).filter((req) => new URL(req.url).pathname.startsWith(ROUTE_KEY));
+  const routes = await Promise.all(keys.map(async (req) => (await cache.match(req))!.json() as Promise<OfflineRoute>));
   return routes.sort((a, b) => b.savedAt.localeCompare(a.savedAt));
 }
 
@@ -228,6 +233,16 @@ export async function downloadRoute(
   const tiles = [...new Set(tileTemplates.flatMap(({ template, zooms }) => corridorTiles(line, zooms).map((t) => tileUrl(template, t))))];
   if (tiles.length > MAX_TILES) throw new Error("La ruta es demasiado extensa para guardarla sin conexión.");
 
+  // el registro va antes de bajar: si se corta, la ruta queda incompleta y sus teselas se pueden borrar
+  const saveRecord = async (record: OfflineRoute) =>
+    (await routesCache()).put(ROUTE_KEY + encodeURIComponent(route.slug), new Response(JSON.stringify(record), { headers: { "Content-Type": "application/json" } }));
+  const record: OfflineRoute = { ...route, line, profile, tiles: tiles.map(tileCacheKey), bytes: 0, savedAt: new Date().toISOString(), complete: false };
+  await saveRecord(record);
+  const storage = await navigator.storage?.estimate?.().catch(() => undefined);
+  if (storage?.quota !== undefined && storage.usage !== undefined && storage.quota - storage.usage < estimateDownload(line).mb * 1024 * 1024) {
+    throw new Error("No hay espacio suficiente en el dispositivo");
+  }
+
   const [mapCache, styleCache] = await Promise.all([caches.open(MAP_CACHE), caches.open(STYLE_CACHE)]);
   const jobs = [...style.urls.map((url) => ({ url, cache: styleCache, key: url })), ...tiles.map((url) => ({ url, cache: mapCache, key: tileCacheKey(url) }))];
   let done = 0;
@@ -245,8 +260,10 @@ export async function downloadRoute(
     }),
   );
 
-  const saved: OfflineRoute = { ...route, line, profile, tiles: tiles.map(tileCacheKey), bytes, savedAt: new Date().toISOString() };
-  await (await routesCache()).put(ROUTE_KEY + encodeURIComponent(route.slug), new Response(JSON.stringify(saved), { headers: { "Content-Type": "application/json" } }));
+  // sin portada si falla: no vale perder la descarga por una foto
+  if (route.cover_url) await fetchInto(await routesCache(), route.cover_url, signal, COVER_KEY + encodeURIComponent(route.slug)).catch(() => 0);
+  const saved: OfflineRoute = { ...record, bytes, complete: true };
+  await saveRecord(saved);
   await cacheOfflineShell();
   return saved;
 }
@@ -258,7 +275,118 @@ export async function deleteOfflineRoute(slug: string) {
   const kept = new Set(routes.filter((r) => r.slug !== slug).flatMap((r) => r.tiles));
   const mapCache = await caches.open(MAP_CACHE);
   await Promise.all(target.tiles.filter((t) => !kept.has(t)).map((t) => mapCache.delete(t)));
-  await (await routesCache()).delete(ROUTE_KEY + encodeURIComponent(slug));
+  const cache = await routesCache();
+  await Promise.all([cache.delete(ROUTE_KEY + encodeURIComponent(slug)), cache.delete(COVER_KEY + encodeURIComponent(slug))]);
+  setDownload(slug, null);
+}
+
+export async function getOfflineCover(slug: string) {
+  const res = await (await routesCache()).match(COVER_KEY + encodeURIComponent(slug));
+  return res ? res.blob() : null;
+}
+
+/** Uso y cuota del almacenamiento, y si el navegador promete no borrarlo; null sin la API. */
+export async function storageStatus() {
+  const [estimate, persisted] = await Promise.all([navigator.storage?.estimate?.(), navigator.storage?.persisted?.()]);
+  return estimate ? { usage: estimate.usage ?? 0, quota: estimate.quota ?? 0, persisted: !!persisted } : null;
+}
+
+export type DownloadState =
+  | { status: "en-cola" | "incompleta"; error?: string }
+  | { status: "bajando"; done: number; total: number }
+  | { status: "lista"; bytes: number };
+
+type Job = { route: OfflineRouteInfo; line: LineCoords; profile: ProfilePoint[] | null; prev?: DownloadState };
+type Downloads = { routes: Readonly<Record<string, DownloadState>> | null; done: number; total: number };
+
+// cola de una ruta a la vez: vive mientras la app está abierta y sobrevive la navegación del cliente
+let downloads: Downloads = { routes: null, done: 0, total: 0 };
+let loaded = false;
+let current: { slug: string; controller: AbortController } | null = null;
+const queue: Job[] = [];
+const downloadListeners = new Set<() => void>();
+const SERVER_DOWNLOADS: Downloads = { routes: null, done: 0, total: 0 };
+
+function emitDownloads(next: Partial<Downloads>) {
+  downloads = { ...downloads, ...next };
+  downloadListeners.forEach((l) => l());
+}
+
+function setDownload(slug: string, state: DownloadState | null | undefined) {
+  const routes = { ...downloads.routes };
+  if (state) routes[slug] = state;
+  else delete routes[slug];
+  emitDownloads({ routes });
+}
+
+function subscribeDownloads(listener: () => void) {
+  downloadListeners.add(listener);
+  return () => downloadListeners.delete(listener);
+}
+
+function loadDownloads() {
+  if (loaded || !offlineSupported()) return;
+  loaded = true;
+  listOfflineRoutes().then((saved) => {
+    const routes = { ...downloads.routes };
+    for (const r of saved) routes[r.slug] ??= r.complete === false ? { status: "incompleta" } : { status: "lista", bytes: r.bytes };
+    emitDownloads({ routes });
+  });
+}
+
+async function runQueue() {
+  const job = current ? undefined : queue.shift();
+  if (!job) return;
+  const slug = job.route.slug;
+  const controller = new AbortController();
+  current = { slug, controller };
+  setDownload(slug, { status: "bajando", done: 0, total: 1 });
+  try {
+    const saved = await downloadRoute(job.route, job.line, job.profile, (done, total) => setDownload(slug, { status: "bajando", done, total }), controller.signal);
+    setDownload(slug, { status: "lista", bytes: saved.bytes });
+  } catch (e) {
+    let error: string | undefined;
+    if (!controller.signal.aborted) {
+      console.error("descarga sin conexión:", e);
+      error = e instanceof Error && /^(La ruta|No hay espacio)/.test(e.message) ? e.message : "No se pudo descargar. Revisa tu conexión e inténtalo otra vez.";
+    }
+    setDownload(slug, { status: "incompleta", error });
+  }
+  current = null;
+  // la cola vacía cierra la tanda: el contador vuelve a cero
+  emitDownloads(queue.length ? { done: downloads.done + 1 } : { done: 0, total: 0 });
+  void runQueue();
+}
+
+/** Agrega la ruta a la cola si no está ya bajando o esperando. */
+export function queueDownload(route: OfflineRouteInfo, line: LineCoords, profile: ProfilePoint[] | null) {
+  if (current?.slug === route.slug || queue.some((j) => j.route.slug === route.slug)) return;
+  queue.push({ route, line, profile, prev: downloads.routes?.[route.slug] });
+  setDownload(route.slug, { status: "en-cola" });
+  emitDownloads({ total: downloads.total + 1 });
+  void runQueue();
+}
+
+/** Quita la ruta de la cola o corta su descarga (queda incompleta). */
+export function cancelDownload(slug: string) {
+  const i = queue.findIndex((j) => j.route.slug === slug);
+  if (i >= 0) {
+    setDownload(slug, queue.splice(i, 1)[0].prev);
+    emitDownloads({ total: downloads.total - 1 });
+  }
+  if (current?.slug === slug) current.controller.abort();
+}
+
+export function cancelAllDownloads() {
+  for (const job of queue.splice(0)) setDownload(job.route.slug, job.prev);
+  emitDownloads({ total: downloads.done + (current ? 1 : 0) });
+  current?.controller.abort();
+}
+
+/** Estado de descarga por slug (null mientras se lee el dispositivo) y el avance de la tanda en cola. */
+export function useDownloads() {
+  useEffect(loadDownloads, []);
+  return useSyncExternalStore(subscribeDownloads, () => downloads, () => SERVER_DOWNLOADS);
 }
 
 /** Pide al service worker guardar la página de descargas y sus scripts, para abrirla sin red. */
@@ -282,5 +410,6 @@ export function useIosSafariTab() {
 }
 
 export function formatMb(bytes: number) {
+  if (bytes >= 1024 ** 3) return `${(bytes / 1024 ** 3).toLocaleString("es-MX", { maximumFractionDigits: 1 })} GB`;
   return `${(bytes / 1024 / 1024).toLocaleString("es-MX", { maximumFractionDigits: bytes < 10 * 1024 * 1024 ? 1 : 0 })} MB`;
 }

@@ -4,11 +4,24 @@
 import { useEffect, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import clsx from "clsx";
-import { ArrowLeft, CloudDownload, Mountain, Rotate3d, Smartphone, Trash2, TrendingUp, WifiOff } from "lucide-react";
+import { ArrowLeft, Check, CloudDownload, Mountain, Rotate3d, Smartphone, Trash2, TrendingUp, WifiOff, X } from "lucide-react";
 import { ElevationProfile } from "@/components/elevation-profile";
 // sin next/dynamic: así sus scripts vienen en el HTML que guarda el service worker y el mapa abre sin red
 import { TrackMap } from "@/components/track-map";
-import { deleteOfflineRoute, formatMb, getOfflineRoute, listOfflineRoutes, offlineSupported, useIosSafariTab, type OfflineRoute } from "@/lib/offline";
+import {
+  cancelDownload,
+  deleteOfflineRoute,
+  formatMb,
+  getOfflineCover,
+  getOfflineRoute,
+  listOfflineRoutes,
+  offlineSupported,
+  queueDownload,
+  storageStatus,
+  useDownloads,
+  useIosSafariTab,
+  type OfflineRoute,
+} from "@/lib/offline";
 import { DIFFICULTY, formatDuration, formatKm } from "@/lib/routes";
 
 /** Lista de rutas guardadas en el dispositivo o, con `?ruta=`, el visor de una. Los enlaces son <a>: sin red solo hay HTML del service worker. */
@@ -17,9 +30,34 @@ export function OfflineRoutes() {
   return slug ? <Viewer slug={slug} /> : <List />;
 }
 
+/** Portada guardada en el cache: sin red no hay next/image. */
+function Cover({ slug }: { slug: string }) {
+  const [src, setSrc] = useState<string | null>(null);
+  useEffect(() => {
+    let url: string | undefined;
+    let live = true;
+    getOfflineCover(slug).then((blob) => {
+      if (!blob || !live) return;
+      url = URL.createObjectURL(blob);
+      setSrc(url);
+    });
+    return () => {
+      live = false;
+      if (url) URL.revokeObjectURL(url);
+    };
+  }, [slug]);
+  return (
+    <div className="flex size-16 shrink-0 items-center justify-center overflow-hidden rounded-xl bg-surface-container text-primary-container/70 sm:size-20">
+      {/* eslint-disable-next-line @next/next/no-img-element -- blob local, sin optimizar */}
+      {src ? <img src={src} alt="" className="size-full object-cover" /> : <Mountain className="size-7" aria-hidden />}
+    </div>
+  );
+}
+
 function List() {
   const [routes, setRoutes] = useState<OfflineRoute[] | null>(null);
-  const [usage, setUsage] = useState<number | null>(null);
+  const [storage, setStorage] = useState<Awaited<ReturnType<typeof storageStatus>>>(null);
+  const { routes: live } = useDownloads();
   const iosTab = useIosSafariTab();
   // el service worker manda aquí lo que no pudo abrir sin señal; solo del mismo origen (el navegador quita tabs y lee /\ como //)
   // location existe: useSearchParams en una página estática solo renderiza en el cliente
@@ -32,15 +70,16 @@ function List() {
     // ?desde= mal formado: sin enlace de reintento
   }
 
+  // se vuelve a leer el dispositivo cuando una ruta cambia de estado; el total llega ya con su registro escrito
+  const statuses = Object.entries(live ?? {})
+    .map(([slug, d]) => slug + d.status + (d.status === "bajando" ? d.total : ""))
+    .join();
   useEffect(() => {
     (offlineSupported() ? listOfflineRoutes() : Promise.resolve([])).then(setRoutes);
-    navigator.storage?.estimate?.().then((e) => setUsage(e.usage ?? null));
-  }, []);
-
-  async function remove(slug: string) {
-    await deleteOfflineRoute(slug);
-    setRoutes((rs) => rs?.filter((r) => r.slug !== slug) ?? null);
-  }
+    storageStatus()
+      .then(setStorage)
+      .catch(() => setStorage(null));
+  }, [statuses]);
 
   return (
     <div className="min-h-dvh bg-surface-container-low">
@@ -51,6 +90,17 @@ function List() {
             brecha
           </a>
         </div>
+        {retryHref && (
+          <div className="border-t border-outline-variant bg-secondary-fixed">
+            <p className="mx-auto flex max-w-3xl items-center gap-2 px-4 py-2.5 text-sm text-on-secondary-container">
+              <WifiOff className="size-4 shrink-0 text-secondary" aria-hidden />
+              <span className="flex-1">Sin señal · estás viendo lo guardado en este dispositivo</span>
+              <a href={retryHref} className="shrink-0 font-headline font-bold text-secondary">
+                Reintentar
+              </a>
+            </p>
+          </div>
+        )}
       </header>
       <main className="mx-auto max-w-3xl space-y-5 px-4 py-6">
         <div>
@@ -58,22 +108,20 @@ function List() {
             <WifiOff className="size-6 text-primary" aria-hidden />
             Rutas sin conexión
           </h1>
-          <p className="mt-1 text-sm text-on-surface-variant">
-            Se abren sin señal con satélite, relieve 3D y tu ubicación por GPS.
-            {usage !== null && ` Brecha ocupa ${formatMb(usage)} en este dispositivo.`}
-          </p>
+          <p className="mt-1 text-sm text-on-surface-variant">Se abren sin señal con satélite, relieve 3D y tu ubicación por GPS.</p>
         </div>
 
-        {retryHref && (
-          <p className="flex gap-2 rounded-xl bg-secondary-fixed/40 p-3 text-xs">
-            <WifiOff className="size-4 shrink-0 text-secondary" aria-hidden />
-            <span>
-              No hay señal para abrir esa página.{" "}
-              <a href={retryHref} className="font-semibold underline">
-                Reintentar
-              </a>
-            </span>
-          </p>
+        {storage && storage.quota > 0 && (
+          <div className="space-y-2.5 rounded-2xl border border-outline-variant/70 bg-surface-container-lowest p-4 shadow-xs">
+            <p className="flex flex-wrap justify-between gap-x-3 text-sm">
+              <span>Brecha ocupa {formatMb(storage.usage)}</span>
+              <span>Quedan {formatMb(Math.max(0, storage.quota - storage.usage))} libres</span>
+            </p>
+            <div className="h-2 overflow-hidden rounded-full bg-surface-container-high">
+              <div className="h-full rounded-full bg-primary" style={{ width: `${Math.min(100, Math.max(2, (storage.usage / storage.quota) * 100))}%` }} />
+            </div>
+            {!storage.persisted && <p className="font-mono text-xs text-on-surface-variant">El sistema podría borrar estos datos si el teléfono se queda sin espacio.</p>}
+          </div>
         )}
 
         {iosTab && (
@@ -99,11 +147,15 @@ function List() {
         )}
 
         <ul className="space-y-3">
-          {routes?.map((r) => (
-            <li key={r.slug} className="flex items-center gap-3 rounded-2xl border border-outline-variant/70 bg-surface-container-lowest p-4 shadow-xs">
-              <a href={`/descargas?ruta=${encodeURIComponent(r.slug)}`} className="min-w-0 flex-1">
+          {routes?.map((r) => {
+            // los estados en vivo salen de la cola; sin ella, del registro
+            const state = live?.[r.slug] ?? (r.complete === false ? { status: "incompleta" as const } : { status: "lista" as const, bytes: r.bytes });
+            const ready = state.status === "lista";
+            const percent = state.status === "bajando" ? Math.floor((state.done / state.total) * 100) : 0;
+            const info = (
+              <>
                 <p className="truncate font-headline font-bold">{r.name}</p>
-                <p className="truncate text-xs text-on-surface-variant">{r.place_label}</p>
+                <p className="text-xs text-on-surface-variant">{r.place_label}</p>
                 <p className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 font-mono text-[11px] text-on-surface-variant">
                   <span className="flex items-center gap-1">
                     <span className={clsx("size-2 rounded-full", DIFFICULTY[r.difficulty].dot)} />
@@ -111,19 +163,73 @@ function List() {
                   </span>
                   <span>{formatKm(r.distance_km)}</span>
                   <span>↑ {r.elevation_gain_m.toLocaleString("es-MX")} m</span>
-                  <span>{formatMb(r.bytes)}</span>
+                  {ready && <span>{formatMb(state.bytes)}</span>}
                 </p>
-              </a>
-              <button
-                type="button"
-                onClick={() => remove(r.slug)}
-                aria-label={`Borrar ${r.name} del dispositivo`}
-                className="rounded-full p-2 text-on-surface-variant transition-colors hover:bg-surface-container hover:text-error"
-              >
-                <Trash2 className="size-5" aria-hidden />
-              </button>
-            </li>
-          ))}
+              </>
+            );
+            return (
+              <li key={r.slug} className="flex items-start gap-3 rounded-2xl border border-outline-variant/70 bg-surface-container-lowest p-4 shadow-xs">
+                <Cover slug={r.slug} />
+                <div className="min-w-0 flex-1">
+                  {/* solo las completas abren el visor */}
+                  {ready ? (
+                    <a href={`/descargas?ruta=${encodeURIComponent(r.slug)}`} className="block">
+                      {info}
+                    </a>
+                  ) : (
+                    info
+                  )}
+                  {ready && (
+                    <p className="mt-1.5 flex items-center gap-1 text-sm text-primary">
+                      <Check className="size-4" aria-hidden />
+                      Lista para usar sin señal
+                    </p>
+                  )}
+                  {state.status === "bajando" && (
+                    <div className="mt-2 space-y-1">
+                      <div className="h-1.5 overflow-hidden rounded-full bg-surface-container-high">
+                        <div className="h-full rounded-full bg-primary transition-[width]" style={{ width: `${percent}%` }} />
+                      </div>
+                      <p className="text-sm text-primary">Descargando… {percent}%</p>
+                    </div>
+                  )}
+                  {state.status === "en-cola" && <p className="mt-1.5 text-sm text-on-surface-variant">En cola</p>}
+                  {state.status === "incompleta" && (
+                    <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1.5">
+                      <span className="text-sm text-secondary">Descarga incompleta</span>
+                      <button
+                        type="button"
+                        onClick={() => queueDownload(r, r.line, r.profile)}
+                        className="rounded-full border border-primary px-3 py-1 font-headline text-sm font-semibold text-primary hover:bg-surface-container"
+                      >
+                        Reanudar
+                      </button>
+                      {state.error && <span className="w-full text-xs text-error">{state.error}</span>}
+                    </div>
+                  )}
+                </div>
+                {state.status === "bajando" || state.status === "en-cola" ? (
+                  <button
+                    type="button"
+                    onClick={() => cancelDownload(r.slug)}
+                    aria-label={`Cancelar la descarga de ${r.name}`}
+                    className="rounded-full p-2 text-on-surface-variant transition-colors hover:bg-surface-container hover:text-error"
+                  >
+                    <X className="size-5" aria-hidden />
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => deleteOfflineRoute(r.slug).then(() => setRoutes((rs) => rs?.filter((x) => x.slug !== r.slug) ?? null))}
+                    aria-label={`Borrar ${r.name} del dispositivo`}
+                    className="rounded-full p-2 text-on-surface-variant transition-colors hover:bg-surface-container hover:text-error"
+                  >
+                    <Trash2 className="size-5" aria-hidden />
+                  </button>
+                )}
+              </li>
+            );
+          })}
         </ul>
       </main>
     </div>

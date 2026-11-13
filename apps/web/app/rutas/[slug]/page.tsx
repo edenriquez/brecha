@@ -173,6 +173,7 @@ export default async function RoutePage({ params }: Props) {
                       distance_km: route.distance_km,
                       elevation_gain_m: route.elevation_gain_m,
                       duration_min: route.duration_min,
+                      cover_url: route.cover_url,
                     }}
                     line={shape.line}
                     profile={shape.profile}

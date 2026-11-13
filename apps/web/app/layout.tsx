@@ -1,5 +1,6 @@
 import type { Metadata, Viewport } from "next";
 import localFont from "next/font/local";
+import { DownloadPill } from "@/components/download-pill";
 import { ServiceWorker } from "@/components/service-worker";
 import "./globals.css";
 
@@ -21,6 +22,7 @@ export default function RootLayout({ children }: Readonly<{ children: React.Reac
     <html lang="es-MX" className={`${jakarta.variable} ${inter.variable}`}>
       <body>
         {children}
+        <DownloadPill />
         <ServiceWorker />
       </body>
     </html>
