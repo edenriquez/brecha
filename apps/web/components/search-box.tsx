@@ -4,13 +4,14 @@ import { useCallback, useState } from "react";
 import { createPortal } from "react-dom";
 import { useRouter } from "next/navigation";
 import { Search } from "lucide-react";
-import { PlaceSheet, type SearchChanges } from "@/components/place-sheet";
+import { PlaceSheet, type Position, type SearchChanges } from "@/components/place-sheet";
 import { describePlace } from "@/lib/places";
 import type { RouteSummary } from "@/lib/routes";
 
 /**
  * Píldora que abre el buscador de lugares. En el explorador recibe la búsqueda actual y `onChange`
- * cambia la URL en sitio; en las demás páginas elegir algo lleva al mapa (`/?zona=…&lugar=…` o `/?q=…`).
+ * cambia la URL en sitio y ocupa todo el hueco del encabezado; en las demás páginas elegir algo lleva al mapa
+ * (`/?zona=…&lugar=…` o `/?q=…`).
  */
 export function SearchBox({
   query = "",
@@ -21,7 +22,7 @@ export function SearchBox({
   query?: string;
   place?: string | null;
   routes?: RouteSummary[];
-  onChange?: (changes: SearchChanges) => void;
+  onChange?: (changes: SearchChanges, position?: Position) => void;
 }) {
   const [open, setOpen] = useState(false);
   const close = useCallback(() => setOpen(false), []);
@@ -33,7 +34,7 @@ export function SearchBox({
 
   const where = describePlace(place)?.label;
   const searched = query.trim() && `“${query.trim()}”`;
-  const status = [searched, where].filter(Boolean).join(" · ") || "Busca un estado, municipio o cerro";
+  const status = [searched, where].filter(Boolean).join(" · ") || "Busca un estado o el nombre de un cerro";
 
   return (
     <>
@@ -41,7 +42,7 @@ export function SearchBox({
         type="button"
         onClick={() => setOpen(true)}
         aria-haspopup="dialog"
-        className="flex w-full max-w-80 min-w-0 items-center rounded-full border border-outline-variant bg-surface-container-lowest py-1.5 pr-3 pl-3.5 text-left shadow-sm hover:border-primary"
+        className={`flex w-full min-w-0 items-center ${onChange ? "" : "max-w-80"} rounded-full border border-outline-variant bg-surface-container-lowest py-1.5 pr-3 pl-3.5 text-left shadow-sm hover:border-primary`}
       >
         <Search className="mr-2.5 size-5 shrink-0 text-primary" aria-hidden />
         <span className="flex min-w-0 flex-1 flex-col">

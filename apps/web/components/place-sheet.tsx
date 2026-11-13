@@ -1,21 +1,19 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
-import { ChevronLeft, ChevronRight, Loader2, LocateFixed, MapPin, Mountain, Search, X } from "lucide-react";
-import { MY_LOCATION, searchPlaces, STATES, type Place, type PlaceState } from "@/lib/places";
-import { AREA_KEY, boxAround, formatArea, matchesQuery, PLACE_KEY, QUERY_KEY, routeHaystack } from "@/lib/route-filters";
+import { Loader2, LocateFixed, Mountain, Search, X } from "lucide-react";
+import { areaAround, MY_LOCATION, searchStates, STATES, type PlaceState } from "@/lib/places";
+import { AREA_KEY, formatArea, matchesQuery, PLACE_KEY, QUERY_KEY, routeHaystack } from "@/lib/route-filters";
 import type { RouteSummary } from "@/lib/routes";
 
-/** Margen de la zona alrededor del centro de un municipio, de los municipios de un estado y de tu ubicación. */
-const KM = { municipio: 12, estado: 15, gps: 15 };
-
 export type SearchChanges = Record<string, string | null>;
+export type Position = { lat: number; lng: number };
 
 /**
- * Hoja del buscador: escribe y sugiere estados, municipios y rutas (sin servicios externos). Un estado se
- * elige completo o se abre para ver sus municipios. Elegir un lugar fija su zona; Enter busca el texto.
- * `routes`: solo en el explorador, que ya tiene la lista; sin ella no hay grupo de rutas.
+ * Hoja del buscador: escribe y sugiere estados y rutas (sin servicios externos). Elegir un lugar fija su zona;
+ * Enter busca el texto. `routes`: solo en el explorador, que ya tiene la lista; sin ella no hay grupo de rutas.
+ * Con "Usar mi ubicación actual", `onChange` recibe además la posición para el punto azul.
  */
 export function PlaceSheet({
   query,
@@ -27,12 +25,14 @@ export function PlaceSheet({
   query: string;
   place: string | null;
   routes?: RouteSummary[];
-  onChange: (changes: SearchChanges) => void;
+  onChange: (changes: SearchChanges, position?: Position) => void;
   onClose: () => void;
 }) {
   const [text, setText] = useState(query);
-  const [drill, setDrill] = useState<PlaceState | null>(null);
   const [geo, setGeo] = useState<"idle" | "locating" | "error">("idle");
+  // cada pedido de ubicación lleva su número: elegir otra cosa o cerrar la hoja deja viejo al que siga en camino
+  const geoRequest = useRef(0);
+  useEffect(() => () => void geoRequest.current++, []);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => e.key === "Escape" && onClose();
@@ -42,23 +42,28 @@ export function PlaceSheet({
 
   const results = useMemo(() => {
     if (!text.trim()) return null;
-    return { ...searchPlaces(text), routes: (routes ?? []).filter((r) => matchesQuery(routeHaystack(r), text)).slice(0, 6) };
+    return { states: searchStates(text), routes: (routes ?? []).filter((r) => matchesQuery(routeHaystack(r), text)).slice(0, 6) };
   }, [text, routes]);
 
-  function pick(points: { lat: number; lng: number }[], km: number, code: string) {
-    onChange({ [AREA_KEY]: formatArea(boxAround(points, km)), [PLACE_KEY]: code, [QUERY_KEY]: null });
+  function pick(area: string, code: string, position?: Position) {
+    geoRequest.current++;
+    onChange({ [AREA_KEY]: area, [PLACE_KEY]: code, [QUERY_KEY]: null }, position);
     onClose();
   }
-  const pickState = (s: PlaceState) => pick(s.places, KM.estado, s.cve);
-  const pickPlace = (p: Place) => pick([p], KM.municipio, p.cvegeo);
+  const pickState = (s: PlaceState) => pick(formatArea(s.bbox), s.cve);
 
   // sin cookie ni GPS al cargar: solo se pide al tocar el botón
   function locateMe() {
     if (!navigator.geolocation) return setGeo("error");
     setGeo("locating");
+    const request = ++geoRequest.current;
     navigator.geolocation.getCurrentPosition(
-      (pos) => pick([{ lat: pos.coords.latitude, lng: pos.coords.longitude }], KM.gps, MY_LOCATION),
-      () => setGeo("error"),
+      (pos) => {
+        if (request !== geoRequest.current) return;
+        const position = { lat: pos.coords.latitude, lng: pos.coords.longitude };
+        pick(areaAround(position), MY_LOCATION, position);
+      },
+      () => request === geoRequest.current && setGeo("error"),
       { enableHighAccuracy: false, timeout: 10000, maximumAge: 10 * 60 * 1000 },
     );
   }
@@ -68,37 +73,11 @@ export function PlaceSheet({
   const row = "flex w-full min-w-0 items-center gap-3 py-3 text-left";
 
   const stateRow = (s: PlaceState) => (
-    <li key={s.cve} className="flex items-center">
-      <button type="button" onClick={() => pickState(s)} className={`${row} flex-1`}>
+    <li key={s.cve}>
+      <button type="button" onClick={() => pickState(s)} className={row}>
         <span className={`${badge} bg-surface-container text-on-surface-variant`}>{s.name.slice(0, 2).toUpperCase()}</span>
-        <span className="min-w-0">
-          <span className="block truncate text-[15px] font-medium">{s.name}</span>
-          <span className="block text-xs text-on-surface-variant">Estado · {s.places.length} municipios</span>
-        </span>
+        <span className="min-w-0 truncate text-[15px] font-medium">{s.name}</span>
         {place === s.cve && current}
-      </button>
-      <button
-        type="button"
-        onClick={() => {
-          setDrill(s);
-          setText("");
-        }}
-        aria-label={`Ver municipios de ${s.name}`}
-        className="grid size-10 shrink-0 place-items-center rounded-full text-on-surface-variant hover:bg-surface-container"
-      >
-        <ChevronRight className="size-[18px]" aria-hidden />
-      </button>
-    </li>
-  );
-  const placeRow = (p: Place) => (
-    <li key={p.cvegeo}>
-      <button type="button" onClick={() => pickPlace(p)} className={row}>
-        <MapPin className="size-[18px] shrink-0 text-on-surface-variant" aria-hidden />
-        <span className="min-w-0">
-          <span className="block truncate text-[15px] font-medium">{p.name}</span>
-          <span className="block truncate text-xs text-on-surface-variant">{p.state}</span>
-        </span>
-        {place === p.cvegeo && current}
       </button>
     </li>
   );
@@ -139,23 +118,15 @@ export function PlaceSheet({
             onClose();
           }}
         >
-          {drill && (
-            <button type="button" onClick={() => setDrill(null)} aria-label="Volver" className="grid size-10 shrink-0 place-items-center rounded-full border border-outline-variant">
-              <ChevronLeft className="size-[18px]" aria-hidden />
-            </button>
-          )}
           <label className="flex min-w-0 flex-1 items-center gap-2 rounded-full border border-on-surface px-4 py-2.5 focus-within:border-primary">
             <Search className="size-[18px] shrink-0 text-primary" aria-hidden />
             <input
               autoFocus
               type="search"
               value={text}
-              onChange={(e) => {
-                setText(e.target.value);
-                setDrill(null);
-              }}
-              placeholder={drill ? `Buscar en ${drill.name}` : "Estado, municipio o cerro"}
-              aria-label="Buscar un estado, municipio o ruta"
+              onChange={(e) => setText(e.target.value)}
+              placeholder="Estado o cerro"
+              aria-label="Buscar un estado o una ruta"
               enterKeyHint="search"
               // 16px: con menos, iOS hace zoom al enfocar
               className="min-w-0 flex-1 bg-transparent text-base outline-none placeholder:text-on-surface-variant [&::-webkit-search-cancel-button]:hidden"
@@ -173,28 +144,16 @@ export function PlaceSheet({
 
         <div className="min-h-0 flex-1 overflow-y-auto px-5 pb-4">
           {results ? (
-            results.states.length + results.places.length + results.routes.length ? (
+            results.states.length + results.routes.length ? (
               <>
                 {group("Estados", results.states.map(stateRow))}
-                {group("Municipios", results.places.map(placeRow))}
                 {group("Rutas", results.routes.map(routeRow))}
               </>
             ) : (
               <p className="py-6 text-center text-sm text-on-surface-variant">
-                No encontramos “{text.trim()}”. Prueba con otro municipio, un estado o el nombre de un cerro.
+                No encontramos “{text.trim()}”. Busca un estado o el nombre de un cerro.
               </p>
             )
-          ) : drill ? (
-            <ul className="divide-y divide-outline-variant/60">
-              <li>
-                <button type="button" onClick={() => pickState(drill)} className={row}>
-                  <span className={`${badge} bg-primary text-on-primary`}>{drill.name.slice(0, 2).toUpperCase()}</span>
-                  <span className="text-[15px] font-semibold">Todo {drill.name}</span>
-                  {place === drill.cve && current}
-                </button>
-              </li>
-              {drill.places.map(placeRow)}
-            </ul>
           ) : (
             group("Estados", STATES.map(stateRow))
           )}

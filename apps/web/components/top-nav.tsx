@@ -4,13 +4,17 @@ import { SearchBox } from "@/components/search-box";
 import { SuspensionNotice } from "@/components/suspension-notice";
 import { UserMenu } from "@/components/user-menu";
 
-/** `search`: el explorador pasa su buscador, que filtra en sitio; en las demás páginas elegir un lugar o buscar lleva al mapa. */
+/**
+ * `search`: el explorador pasa su buscador, que filtra en sitio; en las demás páginas elegir un lugar o buscar lleva al
+ * mapa. Con él, en teléfono el encabezado es solo la barra: el perfil vive en la isla flotante del explorador.
+ */
 export function TopNav({ search }: { search?: React.ReactNode }) {
+  const phoneHidden = search ? "max-md:hidden" : "";
   return (
     <header className="sticky top-0 z-50 flex-none border-b border-outline-variant bg-surface shadow-sm">
       <div className="flex h-16 w-full items-center justify-between gap-3 px-4 sm:px-6 lg:px-8">
         <div className="flex min-w-0 flex-1 items-center gap-3 sm:gap-6">
-          <Link href="/" aria-label="brecha" className="flex shrink-0 items-center gap-2 font-headline text-2xl font-bold tracking-tight text-primary">
+          <Link href="/" aria-label="brecha" className={`flex shrink-0 items-center gap-2 font-headline text-2xl font-bold tracking-tight text-primary ${phoneHidden}`}>
             <Mountain className="size-7 fill-primary-container text-primary-container" aria-hidden />
             <span className="hidden sm:inline">brecha</span>
           </Link>
@@ -25,7 +29,7 @@ export function TopNav({ search }: { search?: React.ReactNode }) {
             Subir ruta
           </Link>
         </nav>
-        <div className="shrink-0">
+        <div className={`shrink-0 ${phoneHidden}`}>
           <UserMenu />
         </div>
       </div>

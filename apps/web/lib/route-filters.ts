@@ -104,7 +104,7 @@ export function formatArea(area: Area) {
   return area.map((n) => n.toFixed(4)).join(",");
 }
 
-/** Lugar elegido en el buscador, solo para mostrarlo: lo que filtra es su caja en `zona`. */
+/** Lugar elegido en el buscador: la clave de un estado (la lista se recorta a su límite) o "gps"; `zona` lleva su caja. */
 export const PLACE_KEY = "lugar";
 
 /** La caja que contiene los puntos más `km` a cada lado (un grado de latitud son ~111 km). */

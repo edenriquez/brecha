@@ -74,7 +74,8 @@ function paintPill(el: HTMLElement, route: RouteSummary, selected: boolean) {
 // a los lados cabe la etiqueta del pin elegido (va centrada en el inicio); arriba, el botón del recorrido
 const TRACK_FRAME = { padding: { top: 90, bottom: 60, left: 120, right: 120 }, maxZoom: 13.5 };
 
-type Framing = { bounds: maplibregl.LngLatBoundsLike; options: maplibregl.FitBoundsOptions };
+/** `area`: encuadre de la zona elegida, que se descarta si la zona se quita antes de que el mapa se vea. */
+type Framing = { bounds: maplibregl.LngLatBoundsLike; options: maplibregl.FitBoundsOptions; area?: true };
 
 function frame(map: maplibregl.Map, framing: Framing, pending: { current: Framing | null }) {
   if (!map.getContainer().clientWidth) {
@@ -97,6 +98,7 @@ export function RouteMap({
   track,
   profile,
   area,
+  me,
   onUserMove,
   onTourChange,
 }: {
@@ -111,6 +113,8 @@ export function RouteMap({
   onTourChange?: (touring: boolean) => void;
   /** Zona de "Buscar en esta zona": mientras exista, los pines no vuelven a encuadrarse */
   area: Area | null;
+  /** Tu ubicación, si la diste con "Usar mi ubicación actual": se pinta como un punto azul */
+  me: { lat: number; lng: number } | null;
   /** Lo que se ve tras mover el mapa con la mano (no tras un encuadre automático) */
   onUserMove: (view: Area) => void;
 }) {
@@ -230,13 +234,28 @@ export function RouteMap({
   useEffect(() => {
     areaRef.current = area;
     const map = mapRef.current;
-    if (!map || !area) return;
+    if (!map) return;
+    // la zona cambió o se quitó: el encuadre que esperaba a que se viera el mapa ya no vale
+    if (pendingFrame.current?.area) pendingFrame.current = null;
+    if (!area) return;
     const view = viewArea(map);
     if (area.every((n, i) => Math.abs(n - view[i]) < 1e-3)) return;
     const [west, south, east, north] = area;
-    frame(map, { bounds: [[west, south], [east, north]], options: { padding: 0, duration: areaFramed.current ? 600 : 0 } }, pendingFrame);
+    frame(map, { bounds: [[west, south], [east, north]], options: { padding: 0, duration: areaFramed.current ? 600 : 0 }, area: true }, pendingFrame);
     areaFramed.current = true;
   }, [area]);
+
+  // el punto azul de tu ubicación: un marcador fijo, sin seguirte (la zona alrededor ya centra el mapa en ti)
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !me) return;
+    const el = document.createElement("span");
+    el.className = "block size-4 rounded-full border-2 border-white bg-[#1da1f2] shadow-md";
+    el.setAttribute("role", "img");
+    el.setAttribute("aria-label", "Tu ubicación");
+    const marker = new maplibregl.Marker({ element: el }).setLngLat([me.lng, me.lat]).addTo(map);
+    return () => void marker.remove();
+  }, [me]);
 
   // la ruta elegida se encuadra completa en cuanto llega su trazo; sin trazo, basta con que se vea su pin
   useEffect(() => {

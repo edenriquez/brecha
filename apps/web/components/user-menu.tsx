@@ -11,7 +11,8 @@ import { useSessionUser } from "@/lib/use-session-user";
 
 const ITEM = "flex items-center gap-2.5 rounded-lg px-3 py-2 text-sm font-medium hover:bg-surface-container";
 
-export function UserMenu() {
+/** `island`: en la isla inferior del explorador; solo el avatar (Mis salidas va en el menú) y el menú abre hacia arriba. */
+export function UserMenu({ island = false }: { island?: boolean }) {
   const user = useSessionUser();
   const [open, setOpen] = useState(false);
   // pendientes de moderación; null si no es moderación
@@ -53,7 +54,7 @@ export function UserMenu() {
     };
   }, [open]);
 
-  if (user === undefined) return <div className="h-9 w-20" aria-hidden />;
+  if (user === undefined) return <div className={island ? "size-9" : "h-9 w-20"} aria-hidden />;
 
   if (!user) {
     return (
@@ -76,14 +77,16 @@ export function UserMenu() {
   const name = person.display_name ?? "";
   return (
     <div className="flex items-center gap-2 sm:gap-3">
-      <Link
-        href="/mis-salidas"
-        aria-label="Mis salidas"
-        className="flex items-center gap-1.5 rounded-full px-2 py-1.5 text-sm font-semibold text-primary hover:bg-surface-container sm:px-3"
-      >
-        <CalendarCheck className="size-5" aria-hidden />
-        <span className="hidden sm:inline">Mis salidas</span>
-      </Link>
+      {!island && (
+        <Link
+          href="/mis-salidas"
+          aria-label="Mis salidas"
+          className="flex items-center gap-1.5 rounded-full px-2 py-1.5 text-sm font-semibold text-primary hover:bg-surface-container sm:px-3"
+        >
+          <CalendarCheck className="size-5" aria-hidden />
+          <span className="hidden sm:inline">Mis salidas</span>
+        </Link>
+      )}
       <div ref={menu} className="relative">
         <button
           type="button"
@@ -94,12 +97,16 @@ export function UserMenu() {
           className="relative flex items-center gap-2 rounded-full py-0.5 pr-1 pl-0.5 hover:bg-surface-container sm:pr-2"
         >
           <Avatar person={person} size={36} className="border-0 ring-2 ring-primary-fixed" />
-          <span className="hidden text-sm font-medium text-on-surface-variant sm:inline">{name.split(" ")[0]}</span>
-          <ChevronDown className="hidden size-4 text-outline sm:block" aria-hidden />
+          {!island && (
+            <>
+              <span className="hidden text-sm font-medium text-on-surface-variant sm:inline">{name.split(" ")[0]}</span>
+              <ChevronDown className="hidden size-4 text-outline sm:block" aria-hidden />
+            </>
+          )}
           {!!pending && pending.routes + pending.reports > 0 && <span className="absolute -top-0.5 left-7 size-2.5 rounded-full border-2 border-surface bg-secondary" aria-hidden />}
         </button>
         {open && (
-          <div id={menuId} className="absolute right-0 z-50 mt-2 w-60 rounded-xl border border-outline-variant/70 bg-surface-container-lowest p-1.5 shadow-lg">
+          <div id={menuId} className={`absolute right-0 z-50 w-60 ${island ? "bottom-full mb-2" : "mt-2"} rounded-xl border border-outline-variant/70 bg-surface-container-lowest p-1.5 text-on-surface shadow-lg`}>
             <p className="truncate px-3 pt-1.5 pb-2 text-xs text-on-surface-variant">{user.email}</p>
             <nav aria-label="Tu cuenta" onClick={() => setOpen(false)}>
               <Link href={profileHref(user.id)} className={ITEM}>
