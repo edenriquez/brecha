@@ -111,7 +111,7 @@ const CONCURRENCY = 6;
 const RETRY_MS = [2000, 5000, 15000];
 // plazo por petición (sin señal, fetch no falla: se cuelga); el de public/sw.js (8 s) es corto con 6 a la vez y red lenta
 const JOB_TIMEOUT_MS = 60000;
-// en pausa sigue al volver la red o la página, o cada minuto por si `online` no llega; nunca antes de 10 s
+// en pausa sigue al volver la red o la página, o cada minuto con la página visible por si `online` no llega; nunca antes de 10 s
 const RESUME_EVERY_MS = 60000;
 const RESUME_MIN_MS = 10000;
 const NO_SPACE = "No hay espacio suficiente en el dispositivo";
@@ -248,7 +248,10 @@ function httpError(url: string, status: number) {
   return new (fatal ? FatalError : Error)(`${url}: ${status}`);
 }
 
-/** Espera `ms` (con `wake`, también hasta que vuelva la red o la página); corta de inmediato si se cancela. */
+/**
+ * Espera `ms`; corta de inmediato si se cancela. Con `wake` también acaba al volver la red o la página, y el plazo
+ * solo corre con la página visible: oculta no hay temporizador.
+ */
 function wait(ms: number, signal: AbortSignal, wake = false) {
   return new Promise<void>((resolve, reject) => {
     const off = new AbortController();
@@ -257,11 +260,11 @@ function wait(ms: number, signal: AbortSignal, wake = false) {
       off.abort();
       settle();
     };
-    const timer = setTimeout(() => end(resolve), ms);
+    let timer = wake && document.visibilityState !== "visible" ? undefined : setTimeout(() => end(resolve), ms);
     signal.addEventListener("abort", () => end(() => reject(signal.reason)), { signal: off.signal });
     if (wake) {
       window.addEventListener("online", () => end(resolve), { signal: off.signal });
-      document.addEventListener("visibilitychange", () => document.visibilityState === "visible" && end(resolve), { signal: off.signal });
+      document.addEventListener("visibilitychange", () => (document.visibilityState === "visible" ? end(resolve) : (clearTimeout(timer), (timer = undefined))), { signal: off.signal });
     }
     if (signal.aborted) end(() => reject(signal.reason));
   });
@@ -532,7 +535,7 @@ type Downloads = { routes: Readonly<Record<string, DownloadState>> | null; done:
 // cola de una ruta a la vez: vive mientras la app está abierta y sobrevive la navegación del cliente
 let downloads: Downloads = { routes: null, done: 0, total: 0 };
 let loaded = false;
-let current: { slug: string; controller: AbortController } | null = null;
+let current: { slug: string; controller: AbortController; paused?: boolean } | null = null;
 const queue: Job[] = [];
 const downloadListeners = new Set<() => void>();
 const SERVER_DOWNLOADS: Downloads = { routes: null, done: 0, total: 0 };
@@ -568,16 +571,20 @@ function loadDownloads() {
 
 let wakeLock: WakeLockSentinel | null = null;
 
-/** Pantalla encendida mientras hay cola: al bloquearse, iOS suspende la página y corta las peticiones. */
+/**
+ * Pantalla encendida solo mientras una descarga baja (incluidas las pasadas de reintento): al bloquearse, iOS suspende
+ * la página y corta las peticiones. En pausa se suelta: sin señal puede durar horas y la batería importa en el cerro.
+ */
 async function keepAwake() {
+  const downloading = () => !!current && !current.paused;
   try {
-    if (!current) {
+    if (!downloading()) {
       await wakeLock?.release();
       wakeLock = null;
     } else if (!wakeLock || wakeLock.released) {
       const lock = await navigator.wakeLock.request("screen");
       // mientras tanto llegó otra o la cola se vació
-      if (current && (!wakeLock || wakeLock.released)) wakeLock = lock;
+      if (downloading() && (!wakeLock || wakeLock.released)) wakeLock = lock;
       else await lock.release();
     }
   } catch {
@@ -594,7 +601,8 @@ async function runQueue() {
   if (!job) return;
   const slug = job.route.slug;
   const controller = new AbortController();
-  current = { slug, controller };
+  const running = { slug, controller, paused: false };
+  current = running;
   // el mismo listener no se agrega dos veces
   document.addEventListener("visibilitychange", onVisible);
   void keepAwake();
@@ -614,9 +622,14 @@ async function runQueue() {
       }
       // sin red tras los reintentos: espera a que vuelva y sigue (lo ya guardado se salta)
       setDownload(slug, { status: "en-pausa" });
+      running.paused = true;
+      void keepAwake();
       const paused = Date.now();
       await wait(RESUME_EVERY_MS, controller.signal, true);
       await wait(RESUME_MIN_MS - (Date.now() - paused), controller.signal);
+      // si la página está oculta falla y se pide al volver (onVisible)
+      running.paused = false;
+      void keepAwake();
     }
   } catch (e) {
     let error: string | undefined;
