@@ -226,16 +226,16 @@ export function RouteMap({
     frame(map, { bounds, options: { padding: 80, maxZoom: 11, duration: animate ? 600 : 0 } }, pendingFrame);
   }, [routes]);
 
-  // una zona que llega en la URL (enlace compartido, recarga) se encuadra una vez; la que se elige con el botón ya es la vista
+  // la zona que llega en la URL o del buscador de lugares se encuadra; la que se elige con el botón ya es la vista
   useEffect(() => {
     areaRef.current = area;
     const map = mapRef.current;
-    if (!map || !area || areaFramed.current) return;
-    areaFramed.current = true;
+    if (!map || !area) return;
     const view = viewArea(map);
     if (area.every((n, i) => Math.abs(n - view[i]) < 1e-3)) return;
     const [west, south, east, north] = area;
-    frame(map, { bounds: [[west, south], [east, north]], options: { padding: 0, duration: 0 } }, pendingFrame);
+    frame(map, { bounds: [[west, south], [east, north]], options: { padding: 0, duration: areaFramed.current ? 600 : 0 } }, pendingFrame);
+    areaFramed.current = true;
   }, [area]);
 
   // la ruta elegida se encuadra completa en cuanto llega su trazo; sin trazo, basta con que se vea su pin

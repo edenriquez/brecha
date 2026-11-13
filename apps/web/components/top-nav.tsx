@@ -4,7 +4,7 @@ import { SearchBox } from "@/components/search-box";
 import { SuspensionNotice } from "@/components/suspension-notice";
 import { UserMenu } from "@/components/user-menu";
 
-/** `search`: el explorador pasa su buscador en vivo; en las demás páginas buscar lleva al mapa. */
+/** `search`: el explorador pasa su buscador, que filtra en sitio; en las demás páginas elegir un lugar o buscar lleva al mapa. */
 export function TopNav({ search }: { search?: React.ReactNode }) {
   return (
     <header className="sticky top-0 z-50 flex-none border-b border-outline-variant bg-surface shadow-sm">

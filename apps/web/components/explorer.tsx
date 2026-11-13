@@ -38,6 +38,7 @@ import {
   matchesQuery,
   parseActivity,
   parseArea,
+  PLACE_KEY,
   QUERY_KEY,
   RANGE_KEYS,
   ROUTE_KEY,
@@ -49,13 +50,14 @@ import { ACTIVITY, DIFFICULTY, formatDuration, formatKm, type Activity, type Dif
 import type { ProfilePoint } from "@/lib/gpx";
 import type { LineCoords } from "@/lib/maplibre";
 import type { OutingCardData } from "@/lib/outings";
+import { describePlace } from "@/lib/places";
 import { createClient } from "@/lib/supabase/client";
 import { useUrlParams } from "@/lib/use-url-params";
 
 const DIFFICULTIES: Difficulty[] = ["facil", "moderada", "dificil"];
 /** El breakpoint `lg` de Tailwind: desde ahí la lista y el mapa se ven lado a lado. */
 const SIDE_BY_SIDE = "(min-width: 1024px)";
-const CLEARED = Object.fromEntries([QUERY_KEY, DIFFICULTY_KEY, TYPE_KEY, AREA_KEY, ...RANGE_KEYS].map((k) => [k, null]));
+const CLEARED = Object.fromEntries([QUERY_KEY, DIFFICULTY_KEY, TYPE_KEY, AREA_KEY, PLACE_KEY, ...RANGE_KEYS].map((k) => [k, null]));
 const ACTIVITY_ICON: Record<Activity, React.ReactNode> = {
   hiking: <Footprints className="size-5" />,
   bici: <Bike className="size-5" />,
@@ -75,6 +77,9 @@ export function Explorer({ routes: allRoutes, outings: allOutings }: { routes: R
   const tab = params.get("ver") === "salidas" ? "salidas" : "rutas";
   const areaParam = params.get(AREA_KEY);
   const area = useMemo(() => parseArea(areaParam), [areaParam]);
+  // el lugar del buscador solo da nombre a la zona
+  const placeParam = params.get(PLACE_KEY);
+  const place = area ? describePlace(placeParam) : null;
   // rangos y tipo no tienen controles aquí, pero un enlace puede traerlos
   const filtering = Boolean(query.trim() || difficulty || countPanelFilters(params) || area);
   // lo que se ve tras mover el mapa a mano; con él aparece "Buscar en esta zona"
@@ -163,7 +168,20 @@ export function Explorer({ routes: allRoutes, outings: allOutings }: { routes: R
 
   return (
     <>
-      <TopNav search={<SearchBox value={query} onChange={(q) => setParams({ [QUERY_KEY]: q || null })} />} />
+      <TopNav
+        search={
+          <SearchBox
+            query={query}
+            place={place ? placeParam : null}
+            routes={routes}
+            onChange={(changes) => {
+              // la zona elegida reemplaza a la que se veía tras mover el mapa
+              if (AREA_KEY in changes) setMoved(null);
+              setParams(changes);
+            }}
+          />
+        }
+      />
       <main className="relative flex flex-1 overflow-hidden">
         <section
           className={clsx(
@@ -173,7 +191,7 @@ export function Explorer({ routes: allRoutes, outings: allOutings }: { routes: R
         >
           <p className="mb-3 inline-flex items-center gap-1.5 text-xs font-semibold text-primary-container">
             <Navigation className="size-3.5 fill-primary-container" aria-hidden />
-            Rutas cerca de Ciudad de México
+            {place ? `Rutas ${place.where}` : "Rutas cerca de Ciudad de México"}
           </p>
 
           <div className="mb-3 grid grid-cols-3 gap-2">
@@ -208,9 +226,9 @@ export function Explorer({ routes: allRoutes, outings: allOutings }: { routes: R
           <div className="no-scrollbar mb-3 flex items-center gap-2 overflow-x-auto py-1">
             {area && (
               <>
-                <Chip active onClick={() => setParams({ [AREA_KEY]: null })}>
+                <Chip active onClick={() => setParams({ [AREA_KEY]: null, [PLACE_KEY]: null })}>
                   <MapPinned className="size-3.5" aria-hidden />
-                  Zona del mapa
+                  {place?.label ?? "Zona del mapa"}
                   <X className="size-3.5" aria-label="Quitar" />
                 </Chip>
                 <span className="mx-1 h-5 w-px shrink-0 bg-outline-variant" aria-hidden />
@@ -249,7 +267,9 @@ export function Explorer({ routes: allRoutes, outings: allOutings }: { routes: R
               ) : (
                 <Empty>
                   {area && matching.length
-                    ? "No hay rutas en esta zona del mapa. Aléjate un poco y busca de nuevo."
+                    ? place
+                      ? `Todavía no hay rutas ${place.where}. Prueba con otro lugar o aléjate en el mapa.`
+                      : "No hay rutas en esta zona del mapa. Aléjate un poco y busca de nuevo."
                     : filtering
                       ? "Ninguna ruta coincide con tu búsqueda."
                       : activity === "hiking"
@@ -305,7 +325,7 @@ export function Explorer({ routes: allRoutes, outings: allOutings }: { routes: R
               type="button"
               onClick={() => {
                 if (!moved) return;
-                setParams({ [AREA_KEY]: formatArea(moved) });
+                setParams({ [AREA_KEY]: formatArea(moved), [PLACE_KEY]: null });
                 setMoved(null);
                 setView("lista");
               }}
