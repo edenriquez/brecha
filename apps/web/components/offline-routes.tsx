@@ -203,6 +203,7 @@ function List() {
                     </div>
                   )}
                   {state.status === "en-cola" && <p className="mt-1.5 text-sm text-on-surface-variant">En cola</p>}
+                  {state.status === "en-pausa" && <p className="mt-1.5 text-sm text-secondary">Sin conexión · se reanuda sola</p>}
                   {state.status === "incompleta" && (
                     <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1.5">
                       <span className="text-sm text-secondary">Descarga incompleta</span>
@@ -217,7 +218,7 @@ function List() {
                     </div>
                   )}
                 </div>
-                {state.status === "bajando" || state.status === "en-cola" ? (
+                {state.status === "bajando" || state.status === "en-cola" || state.status === "en-pausa" ? (
                   <button
                     type="button"
                     onClick={() => cancelDownload(r.slug)}

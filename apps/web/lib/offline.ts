@@ -107,6 +107,14 @@ const MAX_TILES = 20000;
 const KB_PER_TILE = { satellite: 22, dem: 60, vector: 30, lidar: 6.5 };
 const GLYPH_RANGES = ["0-255", "256-511", "8192-8447"];
 const CONCURRENCY = 6;
+// lo que falla se aparta y se reintenta en otra pasada tras estas esperas; si sigue fallando, la descarga queda en pausa
+const RETRY_MS = [2000, 5000, 15000];
+// plazo por petición (sin señal, fetch no falla: se cuelga); el de public/sw.js (8 s) es corto con 6 a la vez y red lenta
+const JOB_TIMEOUT_MS = 60000;
+// en pausa sigue al volver la red o la página, o cada minuto por si `online` no llega; nunca antes de 10 s
+const RESUME_EVERY_MS = 60000;
+const RESUME_MIN_MS = 10000;
+const NO_SPACE = "No hay espacio suficiente en el dispositivo";
 
 export function offlineSupported() {
   return typeof window !== "undefined" && "caches" in window && "serviceWorker" in navigator;
@@ -231,9 +239,41 @@ type StyleJson = {
   layers: { layout?: Record<string, unknown> }[];
 };
 
+/** Lo que no se arregla esperando: la descarga queda incompleta en vez de en pausa. */
+class FatalError extends Error {}
+
+function httpError(url: string, status: number) {
+  // 408 y 429 son de red lenta o saturada: se reintentan
+  const fatal = status >= 400 && status < 500 && status !== 408 && status !== 429;
+  return new (fatal ? FatalError : Error)(`${url}: ${status}`);
+}
+
+/** Espera `ms` (con `wake`, también hasta que vuelva la red o la página); corta de inmediato si se cancela. */
+function wait(ms: number, signal: AbortSignal, wake = false) {
+  return new Promise<void>((resolve, reject) => {
+    const off = new AbortController();
+    const end = (settle: () => void) => {
+      clearTimeout(timer);
+      off.abort();
+      settle();
+    };
+    const timer = setTimeout(() => end(resolve), ms);
+    signal.addEventListener("abort", () => end(() => reject(signal.reason)), { signal: off.signal });
+    if (wake) {
+      window.addEventListener("online", () => end(resolve), { signal: off.signal });
+      document.addEventListener("visibilitychange", () => document.visibilityState === "visible" && end(resolve), { signal: off.signal });
+    }
+    if (signal.aborted) end(() => reject(signal.reason));
+  });
+}
+
+function withTimeout(signal: AbortSignal) {
+  return "any" in AbortSignal ? AbortSignal.any([signal, AbortSignal.timeout(JOB_TIMEOUT_MS)]) : signal;
+}
+
 async function getJson<T>(url: string, signal?: AbortSignal): Promise<T> {
   const res = await fetch(url, { signal });
-  if (!res.ok) throw new Error(`${url}: ${res.status}`);
+  if (!res.ok) throw httpError(url, res.status);
   return res.json();
 }
 
@@ -266,21 +306,19 @@ async function styleResources(signal: AbortSignal) {
   return { urls, sources };
 }
 
-async function fetchInto(cache: Cache, url: string, signal: AbortSignal, key = url, load = () => fetch(url, { signal })) {
-  for (let attempt = 0; ; attempt++) {
-    try {
-      const res = await load();
-      // teselas que no existen (mar, sin imagen): no hay nada que guardar
-      if (res.status === 404 || res.status === 204) return 0;
-      if (!res.ok) throw new Error(`${url}: ${res.status}`);
-      const body = await res.blob();
-      await cache.put(key, new Response(body, { headers: { "Content-Type": res.headers.get("Content-Type") ?? "application/octet-stream" } }));
-      return body.size;
-    } catch (e) {
-      if (signal.aborted || attempt >= 2) throw e;
-      await new Promise((r) => setTimeout(r, 500 * (attempt + 1)));
-    }
+// `reload`: public/sw.js no la intercepta, así no hereda su plazo de 8 s; los reintentos van por pasadas en downloadRoute
+async function fetchInto(cache: Cache, url: string, signal: AbortSignal, key = url, load = () => fetch(url, { signal: withTimeout(signal), cache: "reload" })) {
+  const res = await load();
+  // teselas que no existen (mar, sin imagen): no hay nada que guardar
+  if (res.status === 404 || res.status === 204) return 0;
+  if (!res.ok) throw httpError(url, res.status);
+  const body = await res.blob();
+  try {
+    await cache.put(key, new Response(body, { headers: { "Content-Type": res.headers.get("Content-Type") ?? "application/octet-stream" } }));
+  } catch (e) {
+    throw e instanceof DOMException && e.name === "QuotaExceededError" ? new FatalError(NO_SPACE) : e;
   }
+  return body.size;
 }
 
 async function routesCache() {
@@ -318,7 +356,7 @@ async function lidarTiles(cells: string[], signal: AbortSignal) {
     zoneTiles(cells, LIDAR_ZOOMS, bounds).map(([z, x, y]) => ({
       key: `${LAYERS_BASE}/${name}/${z}/${x}/${y}`,
       load: async () => {
-        const tile = await pmtiles.getZxy(z, x, y, signal);
+        const tile = await pmtiles.getZxy(z, x, y, withTimeout(signal));
         // ráster WebP; sin tesela (fuera de lo analizado) no hay nada que guardar
         return tile ? new Response(tile.data, { headers: { "Content-Type": "image/webp" } }) : new Response(null, { status: 404 });
       },
@@ -360,7 +398,7 @@ export async function downloadRoute(
   ];
   const tiles = [...new Set(tileTemplates.flatMap(({ template, zooms }) => areaTiles(line, cells, zooms).map((t) => tileUrl(template, t))))];
   const lidar = options.lidar ? await lidarTiles(cells, signal) : [];
-  if (tiles.length + lidar.length > MAX_TILES) throw new Error("La ruta es demasiado extensa para guardarla sin conexión.");
+  if (tiles.length + lidar.length > MAX_TILES) throw new FatalError("La ruta es demasiado extensa para guardarla sin conexión.");
 
   // el registro va antes de bajar: si se corta, sus teselas se pueden borrar (una ruta nueva queda incompleta)
   const saveRecord = async (record: OfflineRoute) =>
@@ -387,7 +425,7 @@ export async function downloadRoute(
   await saveRecord(progressRecord(bytes));
   const storage = await navigator.storage?.estimate?.().catch(() => undefined);
   if (storage?.quota !== undefined && storage.usage !== undefined && storage.quota - storage.usage < estimateDownload(line, radiusKm, options, zone).mb * 1024 * 1024) {
-    throw new Error("No hay espacio suficiente en el dispositivo");
+    throw new FatalError(NO_SPACE);
   }
 
   const [mapCache, styleCache, layersCache] = await Promise.all([caches.open(MAP_CACHE), caches.open(STYLE_CACHE), caches.open(LAYERS_CACHE)]);
@@ -404,26 +442,39 @@ export async function downloadRoute(
     ...lidar.map(({ key, load }) => ({ url: key, cache: mapCache, key, load })),
   ];
   let done = 0;
-  let next = 0;
-  let failed = false;
+  let stop = false;
+  let lastError: unknown;
   onProgress(0, jobs.length);
   try {
-    await Promise.all(
-      Array.from({ length: CONCURRENCY }, async () => {
-        // al primer fallo los demás dejan de bajar
-        while (!failed && next < jobs.length) {
-          const job = jobs[next++];
-          try {
-            // compartida con otra ruta ya descargada
-            if (job.cache !== mapCache || !(await mapCache.match(job.key))) bytes += await fetchInto(job.cache, job.url, signal, job.key, job.load);
-          } catch (e) {
-            failed = true;
-            throw e;
+    // por pasadas: lo que falla se aparta y los demás siguen; lo apartado va en la siguiente, tras una espera creciente
+    for (let pending = jobs, pass = 0; pending.length; pass++) {
+      if (pass > RETRY_MS.length) throw lastError;
+      if (pass) await wait(RETRY_MS[pass - 1], signal);
+      const failed: typeof jobs = [];
+      let next = 0;
+      await Promise.all(
+        Array.from({ length: CONCURRENCY }, async () => {
+          while (!stop && next < pending.length) {
+            signal.throwIfAborted();
+            const job = pending[next++];
+            try {
+              // compartida con otra ruta ya descargada
+              if (job.cache !== mapCache || !(await mapCache.match(job.key))) bytes += await fetchInto(job.cache, job.url, signal, job.key, job.load);
+              onProgress(++done, jobs.length);
+            } catch (e) {
+              // cancelada o sin arreglo esperando: los demás dejan de bajar
+              if (signal.aborted || e instanceof FatalError) {
+                stop = true;
+                throw e;
+              }
+              failed.push(job);
+              lastError = e;
+            }
           }
-          onProgress(++done, jobs.length);
-        }
-      }),
-    );
+        }),
+      );
+      pending = failed;
+    }
     // sin portada si falla: no vale perder la descarga por una foto
     if (route.cover_url) await fetchInto(await routesCache(), route.cover_url, signal, COVER_KEY + encodeURIComponent(route.slug)).catch(() => 0);
     signal.throwIfAborted();
@@ -470,7 +521,8 @@ export async function storageStatus() {
 }
 
 export type DownloadState =
-  | { status: "en-cola" | "incompleta"; error?: string }
+  // en-pausa: sin red tras los reintentos; sigue sola al volver la red o la página
+  | { status: "en-cola" | "en-pausa" | "incompleta"; error?: string }
   | { status: "bajando"; done: number; total: number }
   | { status: "lista"; bytes: number };
 
@@ -514,19 +566,58 @@ function loadDownloads() {
   });
 }
 
+let wakeLock: WakeLockSentinel | null = null;
+
+/** Pantalla encendida mientras hay cola: al bloquearse, iOS suspende la página y corta las peticiones. */
+async function keepAwake() {
+  try {
+    if (!current) {
+      await wakeLock?.release();
+      wakeLock = null;
+    } else if (!wakeLock || wakeLock.released) {
+      const lock = await navigator.wakeLock.request("screen");
+      // mientras tanto llegó otra o la cola se vació
+      if (current && (!wakeLock || wakeLock.released)) wakeLock = lock;
+      else await lock.release();
+    }
+  } catch {
+    // sin la API o con la página oculta: se vuelve a pedir al volver a ser visible
+  }
+}
+
+function onVisible() {
+  if (document.visibilityState === "visible") void keepAwake();
+}
+
 async function runQueue() {
   const job = current ? undefined : queue.shift();
   if (!job) return;
   const slug = job.route.slug;
   const controller = new AbortController();
   current = { slug, controller };
+  // el mismo listener no se agrega dos veces
+  document.addEventListener("visibilitychange", onVisible);
+  void keepAwake();
   setDownload(slug, { status: "bajando", done: 0, total: 1 });
   try {
-    const saved = await downloadRoute(job.route, job.line, job.profile, (done, total) => {
-        // un progreso tardío no pisa el estado de una ruta que ya no es la actual
-        if (current?.controller === controller) setDownload(slug, { status: "bajando", done, total });
-      }, controller.signal, job.choice);
-    setDownload(slug, { status: "lista", bytes: saved.bytes });
+    for (;;) {
+      try {
+        const saved = await downloadRoute(job.route, job.line, job.profile, (done, total) => {
+            // un progreso tardío no pisa el estado de una ruta que ya no es la actual
+            if (current?.controller === controller) setDownload(slug, { status: "bajando", done, total });
+          }, controller.signal, job.choice);
+        setDownload(slug, { status: "lista", bytes: saved.bytes });
+        break;
+      } catch (e) {
+        if (controller.signal.aborted || e instanceof FatalError) throw e;
+        console.warn("descarga sin conexión en pausa:", e);
+      }
+      // sin red tras los reintentos: espera a que vuelva y sigue (lo ya guardado se salta)
+      setDownload(slug, { status: "en-pausa" });
+      const paused = Date.now();
+      await wait(RESUME_EVERY_MS, controller.signal, true);
+      await wait(RESUME_MIN_MS - (Date.now() - paused), controller.signal);
+    }
   } catch (e) {
     let error: string | undefined;
     if (!controller.signal.aborted) {
@@ -539,6 +630,8 @@ async function runQueue() {
   // la cola vacía cierra la tanda: el contador vuelve a cero
   emitDownloads(queue.length ? { done: downloads.done + 1 } : { done: 0, total: 0 });
   void runQueue();
+  // si no empezó otra, suelta la pantalla
+  void keepAwake();
 }
 
 /** Agrega la ruta a la cola si no está ya bajando o esperando; sin `choice`, la zona y capas de la vez anterior o las de siempre. */
@@ -550,7 +643,7 @@ export function queueDownload(route: OfflineRouteInfo, line: LineCoords, profile
   void runQueue();
 }
 
-/** Quita la ruta de la cola o corta su descarga (queda incompleta). */
+/** Quita la ruta de la cola o corta su descarga, también en pausa (queda incompleta). */
 export function cancelDownload(slug: string) {
   const i = queue.findIndex((j) => j.route.slug === slug);
   if (i >= 0) {

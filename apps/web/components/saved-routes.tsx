@@ -85,7 +85,7 @@ export function SavedRoutes({ routes }: { routes: RouteSummary[] }) {
     autoQueued = true;
     for (const r of routes) {
       const status = downloads[r.slug]?.status;
-      if (status !== "lista" && status !== "bajando" && status !== "en-cola") queue(r);
+      if (status !== "lista" && status !== "bajando" && status !== "en-cola" && status !== "en-pausa") queue(r);
     }
   });
 
@@ -199,6 +199,7 @@ function SavedRow({
         {download?.status === "lista" && <p className="mt-0.5 text-sm font-semibold text-primary">Descargada · {formatMb(download.bytes)}</p>}
         {download?.status === "bajando" && <p className="mt-0.5 text-sm font-semibold text-primary">Descargando… {percent}%</p>}
         {download?.status === "en-cola" && <p className="mt-0.5 text-sm text-on-surface-variant">En cola</p>}
+        {download?.status === "en-pausa" && <p className="mt-0.5 text-sm font-semibold text-secondary">Sin conexión · se reanuda sola</p>}
         {download?.status === "incompleta" && (
           <>
             <p className="mt-0.5 text-sm font-semibold text-secondary">Descarga incompleta · Reintentar</p>
@@ -229,8 +230,8 @@ function SavedRow({
           </span>
         </button>
       )}
-      {download?.status === "en-cola" && (
-        <button type="button" onClick={() => cancelDownload(route.slug)} aria-label={`Quitar ${route.name} de la cola`} className={clsx(ROUND, "border border-outline-variant bg-surface-container text-on-surface-variant")}>
+      {(download?.status === "en-cola" || download?.status === "en-pausa") && (
+        <button type="button" onClick={() => cancelDownload(route.slug)} aria-label={download.status === "en-pausa" ? `Cancelar la descarga de ${route.name}` : `Quitar ${route.name} de la cola`} className={clsx(ROUND, "border border-outline-variant bg-surface-container text-on-surface-variant")}>
           <Clock className="size-5" aria-hidden />
         </button>
       )}
