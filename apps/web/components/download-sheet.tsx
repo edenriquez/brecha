@@ -41,20 +41,22 @@ function cellsGeoJson(cells: string[]): FeatureCollection<Polygon> {
   return { type: "FeatureCollection", features: cells.map((id) => ({ type: "Feature", properties: {}, geometry: { type: "Polygon", coordinates: [cellPolygon(id)] } })) };
 }
 
-/** Hoja para elegir la zona de hexágonos y las capas que se guardan con la ruta (mock 08). */
+/** Hoja para elegir la zona de hexágonos y las capas que se guardan con la ruta (mock 08); `initial`: lo ya guardado. */
 export function DownloadSheet({
   route,
   line,
+  initial,
   onDownload,
   onClose,
 }: {
   route: OfflineRouteInfo;
   line: [number, number][];
+  initial?: DownloadChoice;
   onDownload: (choice: DownloadChoice) => void;
   onClose: () => void;
 }) {
-  const [radiusKm, setRadiusKm] = useState(DEFAULT_RADIUS_KM);
-  const [options, setOptions] = useState(DEFAULT_OPTIONS);
+  const [radiusKm, setRadiusKm] = useState(initial?.radiusKm ?? DEFAULT_RADIUS_KM);
+  const [options, setOptions] = useState(initial?.options ?? DEFAULT_OPTIONS);
   // undefined mientras se lee capa.json: las filas regionales aparecen si la ruta toca su zona
   const [zone, setZone] = useState<Awaited<ReturnType<typeof layerZone>> | undefined>(undefined);
   const [free, setFree] = useState<number | null>(null);
