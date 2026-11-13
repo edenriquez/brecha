@@ -3,7 +3,7 @@
 import { useEffect, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { OpenMapLink } from "@/components/open-map-link";
-import { addHillshade, addTopoLayers, collapseAttribution, lineBounds, MAP_STYLE, maplibregl, setSatellite, setTerrain3d, setTrack, TERRAIN_3D_PITCH, type LineCoords } from "@/lib/maplibre";
+import { addHillshade, addTopoLayers, collapseAttribution, lineBounds, MAP_STYLE, maplibregl, setTerrain3d, setTrack, TERRAIN_3D_PITCH, type LineCoords } from "@/lib/maplibre";
 import { OFFLINE_ZOOM, offlineBounds } from "@/lib/offline";
 
 const LABEL = "flex items-center gap-2 rounded-full border border-outline-variant/80 bg-surface-container-lowest/95 px-2.5 py-1.5 shadow-md";
@@ -22,9 +22,11 @@ export function routeCloses(line: LineCoords) {
 
 /**
  * Mapa con el trazo de la ruta; `hover` es el punto que se señala desde el perfil de altitud.
- * `offline`: visor a pantalla completa de una ruta descargada, en satélite, con GPS y sin salir de la zona guardada.
+ * `offline`: visor a pantalla completa de una ruta descargada, con GPS y sin salir de la zona guardada; el mapa base y las capas los pone el visor.
  * `openHref`: un clic en el mapa (sin arrastrar) lleva ahí, al mapa completo.
  * `onPosition`: cada lectura del GPS del visor. `reversed`: de regreso, "Inicio" y "Fin" se intercambian.
+ * `onReady`: el mapa ya cargado y cómo prender o apagar el GPS (solo `offline`, que no muestra controles propios).
+ * `onTracking`: si el GPS sigue tu ubicación.
  */
 export function TrackMap({
   line,
@@ -34,6 +36,8 @@ export function TrackMap({
   openHref,
   onPosition,
   reversed = false,
+  onReady,
+  onTracking,
 }: {
   line: LineCoords;
   hover: [number, number] | null;
@@ -42,6 +46,8 @@ export function TrackMap({
   openHref?: string;
   onPosition?: (lngLat: [number, number], accuracy: number) => void;
   reversed?: boolean;
+  onReady?: (ready: { map: maplibregl.Map; locate: () => void } | null) => void;
+  onTracking?: (on: boolean) => void;
 }) {
   const router = useRouter();
   const container = useRef<HTMLDivElement>(null);
@@ -58,6 +64,12 @@ export function TrackMap({
     onPositionRef.current = onPosition;
   }, [onPosition]);
   const reversedRef = useRef(reversed);
+  const onReadyRef = useRef(onReady);
+  const onTrackingRef = useRef(onTracking);
+  useEffect(() => {
+    onReadyRef.current = onReady;
+    onTrackingRef.current = onTracking;
+  }, [onReady, onTracking]);
   const labels = useRef<{ start: Element; end: Element } | null>(null);
 
   useEffect(() => {
@@ -68,32 +80,39 @@ export function TrackMap({
       bounds: lineBounds(line),
       fitBoundsOptions: { padding: 48 },
       cooperativeGestures: !offline,
-      attributionControl: { compact: true },
+      // el visor sin conexión deja abajo su barra de avance
+      attributionControl: offline ? false : { compact: true },
       ...(offline && { maxBounds: offlineBounds(line), minZoom: OFFLINE_ZOOM.min, maxZoom: OFFLINE_ZOOM.max }),
     });
-    map.addControl(new maplibregl.NavigationControl({ showCompass: offline }), "bottom-right");
+    if (offline) map.addControl(new maplibregl.AttributionControl({ compact: true }), "top-right");
+    else map.addControl(new maplibregl.NavigationControl({ showCompass: false }), "bottom-right");
     // maplibre solo emite click si no hubo arrastre: mover el mapa no navega
     map.on("click", () => {
       if (openHrefRef.current) router.push(openHrefRef.current);
     });
     if (openHrefRef.current) map.getCanvas().style.cursor = "pointer";
+    let geolocate: maplibregl.GeolocateControl | undefined;
     if (offline) {
-      const geolocate = new maplibregl.GeolocateControl({ positionOptions: { enableHighAccuracy: true }, trackUserLocation: true, fitBoundsOptions: { maxZoom: 15 } });
+      geolocate = new maplibregl.GeolocateControl({ positionOptions: { enableHighAccuracy: true }, trackUserLocation: true, fitBoundsOptions: { maxZoom: 15 } });
       // fuera de la zona guardada llega outofmaxbounds en vez de geolocate: también cuenta como lectura
       const report = (e: maplibregl.GeolocatePositionEvent) => onPositionRef.current?.([e.coords.longitude, e.coords.latitude], e.coords.accuracy);
       geolocate.on("geolocate", report);
       geolocate.on("outofmaxbounds", report);
+      geolocate.on("trackuserlocationstart", () => onTrackingRef.current?.(true));
+      geolocate.on("trackuserlocationend", () => onTrackingRef.current?.(false));
+      // se conserva su lógica (seguimiento, punto azul) pero el botón es el del visor
       map.addControl(geolocate, "bottom-right");
+      geolocate._container.style.display = "none";
     }
     map.once("load", () => {
       addHillshade(map);
-      addTopoLayers(map);
+      addTopoLayers(map, offline);
       setTrack(map, line);
-      if (offline) setSatellite(map, true);
       setTerrain3d(map, terrain3dRef.current);
       if (terrain3dRef.current) map.easeTo({ pitch: TERRAIN_3D_PITCH, duration: 1000 });
       collapseAttribution(map);
       styleLoaded.current = true;
+      onReadyRef.current?.({ map, locate: () => geolocate?.trigger() });
     });
 
     const start = line[0];
@@ -116,6 +135,7 @@ export function TrackMap({
       labels.current = null;
       mapRef.current = null;
       styleLoaded.current = false;
+      onReadyRef.current?.(null);
       map.remove();
     };
   }, [line, offline, router]);
