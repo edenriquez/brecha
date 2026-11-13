@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { ArrowLeft, Binoculars, Loader2, LocateFixed, MountainSnow, Rotate3d, Route, Satellite, Search, Sun, Tent, Users, Waves } from "lucide-react";
+import { ArrowLeft, Binoculars, MountainSnow, Rotate3d, Route, Satellite, Sun, Tent, Users, Waves } from "lucide-react";
 import clsx from "clsx";
 import { RouteMapPanel, type PanelView } from "@/components/route-map-panel";
 import type { ProfilePoint } from "@/lib/gpx";
@@ -146,7 +146,8 @@ function paintPill(el: HTMLElement, route: RouteSummary, selected: boolean) {
 // a los lados cabe la etiqueta del pin elegido (va centrada en el inicio); arriba, el botón del recorrido
 const TRACK_FRAME = { padding: { top: 90, bottom: 60, left: 120, right: 120 }, maxZoom: 13.5 };
 
-type Framing = { bounds: maplibregl.LngLatBoundsLike; options: maplibregl.FitBoundsOptions };
+/** `area`: encuadre de la zona elegida, que se descarta si la zona se quita antes de que el mapa se vea. */
+type Framing = { bounds: maplibregl.LngLatBoundsLike; options: maplibregl.FitBoundsOptions; area?: true };
 
 function frame(map: maplibregl.Map, framing: Framing, pending: { current: Framing | null }) {
   if (!map.getContainer().clientWidth) {
@@ -163,7 +164,7 @@ function viewArea(map: maplibregl.Map): Area {
 }
 
 /**
- * `mode`, `query`: el selector Rutas / Salidas y el buscador que van sobre el mapa; el estado es del explorador.
+ * `mode`: el selector Rutas / Salidas que va sobre el mapa; el estado es del explorador (el buscador vive en el encabezado).
  * Con una ruta elegida el mapa es solo de ella y, si tiene perfil, se ve en 3D con su recorrido andando: se esconden
  * los demás pines, el buscador y el selector, y quedan `onBack` (volver a la vista inicial, plana) y un panel al pie
  * con el recorrido, las capas y `onDownload` (ir a la página de la ruta). No hay botones de zoom: dedos o rueda. `onPeek`: el cursor entró a un pin; sirve para adelantar la carga del trazo.
@@ -175,12 +176,11 @@ export function RouteMap({
   track,
   profile,
   area,
+  me,
   onUserMove,
   mode,
   onMode,
   outingCount,
-  query,
-  onQuery,
   onBack,
   onDownload,
   onPeek,
@@ -192,8 +192,6 @@ export function RouteMap({
   onMode: (mode: "rutas" | "salidas") => void;
   /** Salidas próximas de la actividad, para la insignia del selector */
   outingCount: number;
-  query: string;
-  onQuery: (query: string) => void;
   routes: RouteSummary[];
   selectedId: string | null;
   onSelect: (id: string) => void;
@@ -203,6 +201,8 @@ export function RouteMap({
   profile: ProfilePoint[] | null;
   /** Zona de "Buscar en esta zona": mientras exista, los pines no vuelven a encuadrarse */
   area: Area | null;
+  /** Tu ubicación, si la diste con "Usar mi ubicación actual": se pinta como un punto azul */
+  me: { lat: number; lng: number } | null;
   /** Lo que se ve tras mover el mapa con la mano (no tras un encuadre automático) */
   onUserMove: (view: Area) => void;
 }) {
@@ -242,9 +242,6 @@ export function RouteMap({
     setPanelOwner(selectedId);
     setPanelView("perfil");
   }
-  // "Mi ubicación": el punto azul
-  const [me, setMe] = useState<[number, number] | null>(null);
-  const [locating, setLocating] = useState(false);
   useEffect(() => {
     onSelectRef.current = onSelect;
     onUserMoveRef.current = onUserMove;
@@ -340,17 +337,32 @@ export function RouteMap({
     frame(map, { bounds, options: { padding: 80, maxZoom: 11, duration: animate ? 600 : 0 } }, pendingFrame);
   }, [routes]);
 
-  // una zona que llega en la URL (enlace compartido, recarga) se encuadra una vez; la que se elige con el botón ya es la vista
+  // la zona que llega en la URL o del buscador de lugares se encuadra; la que se elige con el botón ya es la vista
   useEffect(() => {
     areaRef.current = area;
     const map = mapRef.current;
-    if (!map || !area || areaFramed.current) return;
-    areaFramed.current = true;
+    if (!map) return;
+    // la zona cambió o se quitó: el encuadre que esperaba a que se viera el mapa ya no vale
+    if (pendingFrame.current?.area) pendingFrame.current = null;
+    if (!area) return;
     const view = viewArea(map);
     if (area.every((n, i) => Math.abs(n - view[i]) < 1e-3)) return;
     const [west, south, east, north] = area;
-    frame(map, { bounds: [[west, south], [east, north]], options: { padding: 0, duration: 0 } }, pendingFrame);
+    frame(map, { bounds: [[west, south], [east, north]], options: { padding: 0, duration: areaFramed.current ? 600 : 0 }, area: true }, pendingFrame);
+    areaFramed.current = true;
   }, [area]);
+
+  // el punto azul de tu ubicación: un marcador fijo, sin seguirte (la zona alrededor ya centra el mapa en ti)
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map || !me) return;
+    const el = document.createElement("span");
+    el.className = "block size-4 rounded-full border-2 border-white bg-[#1da1f2] shadow-md";
+    el.setAttribute("role", "img");
+    el.setAttribute("aria-label", "Tu ubicación");
+    const marker = new maplibregl.Marker({ element: el }).setLngLat([me.lng, me.lat]).addTo(map);
+    return () => void marker.remove();
+  }, [me]);
 
   // la ruta elegida se encuadra completa en cuanto llega su trazo; sin trazo, basta con que se vea su pin
   useEffect(() => {
@@ -402,33 +414,6 @@ export function RouteMap({
       else if (!map.getBounds().contains(pin)) map.easeTo({ center: pin, duration: 600 });
     }
   }, [selectedId, track, profile]);
-
-  function locate() {
-    if (!navigator.geolocation) return;
-    setLocating(true);
-    navigator.geolocation.getCurrentPosition(
-      (p) => {
-        const here: [number, number] = [p.coords.longitude, p.coords.latitude];
-        setMe(here);
-        setLocating(false);
-        mapRef.current?.flyTo({ center: here, zoom: 11, duration: 800 });
-      },
-      () => setLocating(false),
-      { timeout: 10000, maximumAge: 10 * 60 * 1000 },
-    );
-  }
-
-  useEffect(() => {
-    const map = mapRef.current;
-    if (!map || !me) return;
-    const el = document.createElement("div");
-    el.className = "map-me";
-    el.title = "Estás aquí";
-    const marker = new maplibregl.Marker({ element: el }).setLngLat(me).addTo(map);
-    return () => {
-      marker.remove();
-    };
-  }, [me]);
 
   useEffect(() => {
     satelliteRef.current = satellite;
@@ -538,27 +523,6 @@ export function RouteMap({
       <div ref={container} className="h-full w-full" />
       {!selectedId && (
         <div className="pointer-events-none absolute inset-x-0 top-3 z-20 flex flex-col items-center gap-3 *:pointer-events-auto">
-          <div className="flex h-10 w-64 max-w-[calc(100%-40px)] items-center rounded-full bg-surface-container-lowest shadow-lg ring-1 ring-outline-variant/60 lg:w-auto">
-            {/* en escritorio el buscador ya está en el encabezado */}
-            <label className="flex h-10 min-w-0 flex-1 items-center gap-2 pr-2.5 pl-3.5 lg:hidden">
-              <Search className="size-4 shrink-0" aria-hidden />
-              <input
-                type="search"
-                value={query}
-                onChange={(e) => onQuery(e.target.value)}
-                placeholder="Busca un cerro o parque"
-                aria-label="Buscar rutas"
-                enterKeyHint="search"
-                // 16px: con menos, iOS hace zoom al enfocar
-                className="w-full min-w-0 bg-transparent text-base font-semibold outline-none placeholder:font-normal placeholder:text-on-surface-variant [&::-webkit-search-cancel-button]:hidden"
-              />
-            </label>
-            <span aria-hidden className="h-5 w-px shrink-0 bg-outline-variant lg:hidden" />
-            <button type="button" onClick={locate} aria-label="Mi ubicación" className="flex h-10 shrink-0 items-center gap-2 rounded-full px-3.5 font-headline text-[13px] font-semibold">
-              {locating ? <Loader2 className="size-[17px] animate-spin" aria-hidden /> : <LocateFixed className="size-[17px]" aria-hidden />}
-              <span className="hidden lg:inline">Mi ubicación</span>
-            </button>
-          </div>
           <div role="group" aria-label="Qué ver en el mapa" className="flex h-10 w-64 max-w-[calc(100%-40px)] items-center gap-0.5 rounded-full bg-surface-container-lowest p-1 font-headline text-[13px] font-semibold shadow-lg ring-1 ring-outline-variant/60">
             <button type="button" aria-pressed={mode === "rutas"} onClick={() => onMode("rutas")} className={clsx("h-full flex-1 rounded-full px-3.5 transition-colors", mode === "rutas" ? "bg-on-surface text-surface" : "text-on-surface-variant")}>
               Rutas

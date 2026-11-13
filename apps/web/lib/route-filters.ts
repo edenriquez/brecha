@@ -124,6 +124,18 @@ export function formatArea(area: Area) {
   return area.map((n) => n.toFixed(4)).join(",");
 }
 
+/** Lugar elegido en el buscador: la clave de un estado (la lista se recorta a su límite) o "gps"; `zona` lleva su caja. */
+export const PLACE_KEY = "lugar";
+
+/** La caja que contiene los puntos más `km` a cada lado (un grado de latitud son ~111 km). */
+export function boxAround(points: { lat: number; lng: number }[], km: number): Area {
+  const lats = points.map((p) => p.lat);
+  const lngs = points.map((p) => p.lng);
+  const dLat = km / 111.32;
+  const dLng = dLat / Math.cos((Math.max(...lats.map(Math.abs)) * Math.PI) / 180);
+  return [Math.min(...lngs) - dLng, Math.min(...lats) - dLat, Math.max(...lngs) + dLng, Math.max(...lats) + dLat];
+}
+
 export function inArea(route: Pick<RouteSummary, "lat" | "lng">, [west, south, east, north]: Area) {
   return route.lng >= west && route.lng <= east && route.lat >= south && route.lat <= north;
 }

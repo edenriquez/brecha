@@ -106,15 +106,3 @@ body {
     animation: none;
   }
 }
-
-/* "estás aquí" en el mapa del explorador */
-.map-me {
-  width: 18px;
-  height: 18px;
-  border-radius: 9999px;
-  background: #1a73e8;
-  border: 3px solid #fff;
-  box-shadow:
-    0 0 0 6px rgba(26, 115, 232, 0.2),
-    0 1px 4px rgba(0, 0, 0, 0.3);
-}
