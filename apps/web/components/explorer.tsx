@@ -12,7 +12,6 @@ import {
   CarFront,
   ChevronRight,
   CircleCheck,
-  FilePlus2,
   Footprints,
   List,
   Map as MapIcon,
@@ -259,21 +258,6 @@ export function Explorer({ routes: allRoutes, outings: allOutings }: { routes: R
                   {filtering && <ClearLink onClick={() => setParams(CLEARED)} />}
                 </Empty>
               )}
-              <Link
-                href={activity === "hiking" ? "/rutas/nueva" : `/rutas/nueva?${ACTIVITY_KEY}=${activity}`}
-                className="flex items-center gap-3 rounded-xl border border-dashed border-outline-variant bg-surface-container-lowest/60 p-3 transition-colors hover:border-primary-container"
-              >
-                <span className="flex size-9 shrink-0 items-center justify-center rounded-full bg-primary-fixed/60 text-primary">
-                  <FilePlus2 className="size-5" aria-hidden />
-                </span>
-                <span className="min-w-0 flex-1">
-                  <span className="block font-headline text-sm font-bold">
-                    {activity === "offroad" ? "¿Conoces una brecha que no está aquí?" : "¿Conoces un sendero que no está aquí?"}
-                  </span>
-                  <span className="block text-xs text-on-surface-variant">Sube su GPX y calculamos distancia, desnivel y perfil.</span>
-                </span>
-                <ChevronRight className="size-4 shrink-0 text-outline" aria-hidden />
-              </Link>
             </div>
           ) : visibleOutings.length ? (
             <div className="grid grid-cols-1 gap-3 pb-24 @xl:grid-cols-2 lg:pb-6">
