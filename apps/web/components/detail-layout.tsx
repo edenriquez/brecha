@@ -2,8 +2,8 @@ import { BackButton } from "@/components/back-button";
 import { TopNav } from "@/components/top-nav";
 
 /**
- * Página de detalle (ruta, salida) con el modelo de entrelugares. Teléfono: la foto arriba a todo lo ancho, con
- * volver y compartir flotando sobre ella, y el contenido en una columna. Escritorio: encabezado, y debajo dos
+ * Página de detalle (ruta, salida) con el modelo de entrelugares, bajo el encabezado con el buscador. Teléfono: la
+ * foto arriba a todo lo ancho, con volver y compartir sobre ella, y el contenido en una columna. Escritorio: encabezado, y debajo dos
  * columnas con la tarjeta de acciones (`aside`) fija a la derecha.
  * `lead`: lo primero del contenido; en teléfono va antes de la tarjeta de acciones y `children`, después.
  */
@@ -25,12 +25,10 @@ export function DetailLayout({
 }) {
   return (
     <div className="min-h-screen bg-surface">
-      <div className="hidden lg:block">
-        <TopNav />
-      </div>
-      <main className="mx-auto grid max-w-screen-sm grid-cols-1 pb-12 lg:max-w-[1120px] lg:grid-cols-[minmax(0,1fr)_360px] lg:gap-x-12 lg:px-8 lg:pt-6 lg:pb-16">
-        {/* teléfono: fija, se puede volver o compartir desde cualquier punto del scroll */}
-        <div className="pointer-events-none fixed inset-x-0 top-[max(env(safe-area-inset-top),12px)] z-40 mx-auto flex max-w-screen-sm items-center justify-between px-4 *:pointer-events-auto lg:static lg:col-span-2 lg:mx-0 lg:max-w-none lg:px-0">
+      <TopNav />
+      <main className="relative mx-auto grid max-w-screen-sm grid-cols-1 pb-12 lg:max-w-[1120px] lg:grid-cols-[minmax(0,1fr)_360px] lg:gap-x-12 lg:px-8 lg:pt-6 lg:pb-16">
+        {/* teléfono: sobre la foto, bajo el encabezado con el buscador */}
+        <div className="pointer-events-none absolute inset-x-0 top-3 z-10 flex items-center justify-between px-4 *:pointer-events-auto lg:static lg:col-span-2 lg:px-0">
           <BackButton className="grid size-10 place-items-center rounded-full bg-surface-container-lowest shadow-md hover:bg-surface-container lg:border lg:border-outline-variant lg:shadow-none" />
           <div className="flex gap-2">{actions}</div>
         </div>

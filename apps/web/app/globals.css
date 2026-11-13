@@ -106,3 +106,34 @@ body {
     animation: none;
   }
 }
+
+/* Menú del perfil (components/user-menu.tsx): sale del botón, creciendo desde su esquina, y sus renglones entran después */
+@keyframes menu-pop {
+  from {
+    opacity: 0;
+    transform: scale(0.35);
+    filter: blur(6px);
+  }
+  60% {
+    opacity: 1;
+    filter: none;
+  }
+}
+@keyframes menu-item {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+}
+.menu-pop {
+  animation: menu-pop 260ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+.menu-pop > * {
+  animation: menu-item 240ms cubic-bezier(0.22, 1, 0.36, 1) 90ms both;
+}
+@media (prefers-reduced-motion: reduce) {
+  .menu-pop,
+  .menu-pop > * {
+    animation: none;
+  }
+}

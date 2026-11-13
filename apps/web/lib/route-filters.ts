@@ -72,12 +72,12 @@ export function routeHaystack(route: RouteSummary) {
 
 /** Qué hay en la ruta. Sale de las etiquetas y del nombre: muchas rutas subidas llegan sin etiquetas. */
 export const CATEGORIES = [
-  { id: "cascadas", label: "Cascadas", words: ["cascada", "salto"] },
-  { id: "montanas", label: "Montañas", words: ["cumbre", "montana", "pico", "nevado", "cerro", "volcan"] },
-  { id: "bosques", label: "Bosques", words: ["bosque"] },
-  { id: "miradores", label: "Miradores", words: ["mirador"] },
-  { id: "agua", label: "Ríos y lagunas", words: ["rio", "laguna", "lago"] },
-  { id: "arqueologia", label: "Arqueología", words: ["arqueologia", "piramide"] },
+  { id: "cascadas", emoji: "💦", label: "Cascadas", words: ["cascada", "salto"] },
+  { id: "montanas", emoji: "⛰️", label: "Montañas", words: ["cumbre", "montana", "pico", "nevado", "cerro", "volcan"] },
+  { id: "bosques", emoji: "🌲", label: "Bosques", words: ["bosque"] },
+  { id: "miradores", emoji: "🔭", label: "Miradores", words: ["mirador"] },
+  { id: "agua", emoji: "🏞️", label: "Ríos y lagunas", words: ["rio", "laguna", "lago"] },
+  { id: "arqueologia", emoji: "🏛️", label: "Arqueología", words: ["arqueologia", "piramide"] },
 ] as const;
 export const CATEGORY_KEY = "categoria";
 

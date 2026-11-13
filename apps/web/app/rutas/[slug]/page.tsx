@@ -3,7 +3,7 @@ import Image from "next/image";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import clsx from "clsx";
-import { CalendarPlus, Clock, Download, MapPin, Mountain } from "lucide-react";
+import { CalendarPlus, Clock, MapPin, Mountain } from "lucide-react";
 import { Avatar } from "@/components/avatar";
 import { DetailChip, DetailLayout } from "@/components/detail-layout";
 import { FavoriteButton } from "@/components/favorite-button";
@@ -104,12 +104,6 @@ export default async function RoutePage({ params }: Props) {
                 line={shape.line}
                 profile={shape.profile}
               />
-              {shape.gpxUrl && (
-                <a href={shape.gpxUrl} className="inline-flex h-12 items-center gap-1.5 rounded-xl border border-outline-variant px-4 font-headline text-sm font-semibold transition-colors hover:bg-surface-container">
-                  <Download className="size-4" aria-hidden />
-                  GPX
-                </a>
-              )}
             </div>
           )}
         </>

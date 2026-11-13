@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, useTransition } from
 import { useRouter } from "next/navigation";
 import type { LineString } from "geojson";
 import clsx from "clsx";
-import { Bike, CalendarDays, CarFront, CircleCheck, Footprints, List, Map as MapIcon, MapPinned, Navigation, Route, Search, X } from "lucide-react";
+import { Bike, CalendarDays, CarFront, CircleCheck, Footprints, List, Map as MapIcon, Navigation, Route, Search, X } from "lucide-react";
 import { MountainLoader } from "@/components/mountain-loader";
 import { OutingCard } from "@/components/outing-card";
 import type { Position } from "@/components/place-sheet";
@@ -282,7 +282,7 @@ export function Explorer({ routes: allRoutes, outings: allOutings }: { routes: R
                 {area && (
                   <>
                     <Chip active onClick={() => setParams({ [AREA_KEY]: null, [PLACE_KEY]: null })}>
-                      <MapPinned className="size-4" aria-hidden />
+                      <span aria-hidden>📍</span>
                       {place?.label ?? "Zona del mapa"}
                       <X className="size-4" aria-label="Quitar" />
                     </Chip>
@@ -290,10 +290,12 @@ export function Explorer({ routes: allRoutes, outings: allOutings }: { routes: R
                   </>
                 )}
                 <Chip active={!category} onClick={() => setParams({ [CATEGORY_KEY]: null })}>
+                  <span aria-hidden>🧭</span>
                   Todo
                 </Chip>
                 {categories.map((c) => (
                   <Chip key={c.id} active={category === c.id} onClick={() => setParams({ [CATEGORY_KEY]: category === c.id ? null : c.id })}>
+                    <span aria-hidden>{c.emoji}</span>
                     {c.label}
                   </Chip>
                 ))}
