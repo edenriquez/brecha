@@ -44,3 +44,16 @@ Característica: Isla flotante con "Ver mapa" y perfil
     Dado que veo el mapa
     Cuando arrastro el mapa en cualquier dirección
     Entonces la isla inferior sigue visible
+
+  Escenario: Las demás páginas tienen la isla con "Ver mapa" y el perfil
+    Dado que abro mis rutas guardadas
+    Entonces la isla inferior muestra el botón "Ver mapa" y mi avatar
+    Cuando toco "Ver mapa"
+    Entonces llego al explorador
+
+  Escenario: En las demás páginas la isla se esconde al bajar y vuelve al subir
+    Dado que abro las reglas de la comunidad
+    Cuando me desplazo hacia abajo
+    Entonces la isla inferior se esconde
+    Cuando me desplazo hacia arriba
+    Entonces la isla inferior aparece

@@ -1,39 +1,44 @@
 import Link from "next/link";
 import { FilePlus2, Mountain } from "lucide-react";
+import { PageIsland } from "@/components/island";
 import { SearchBox } from "@/components/search-box";
 import { SuspensionNotice } from "@/components/suspension-notice";
 import { UserMenu } from "@/components/user-menu";
 
 /**
- * `search`: el explorador pasa su buscador, que filtra en sitio; en las demás páginas elegir un lugar o buscar lleva al
- * mapa. Con él, en teléfono el encabezado es solo la barra: el perfil vive en la isla flotante del explorador.
+ * El encabezado de todas las páginas es la barra de búsqueda. En teléfono es solo la barra: el logo y los enlaces no
+ * caben, y el perfil vive en la isla flotante inferior. En escritorio la barra ocupa el hueco entre el logo y los enlaces.
+ * `search`: el explorador pasa su buscador, que filtra en sitio, y pone su propia isla (con Ver mapa / Ver lista);
+ * en las demás páginas elegir un lugar o buscar lleva al mapa y la isla la pone este encabezado.
  */
 export function TopNav({ search }: { search?: React.ReactNode }) {
-  const phoneHidden = search ? "max-md:hidden" : "";
   return (
-    <header className="sticky top-0 z-50 flex-none border-b border-outline-variant bg-surface shadow-sm">
-      <div className="flex h-16 w-full items-center justify-between gap-3 px-4 sm:px-6 lg:px-8">
-        <div className="flex min-w-0 flex-1 items-center gap-3 sm:gap-6">
-          <Link href="/" aria-label="brecha" className={`flex shrink-0 items-center gap-2 font-headline text-2xl font-bold tracking-tight text-primary ${phoneHidden}`}>
-            <Mountain className="size-7 fill-primary-container text-primary-container" aria-hidden />
-            <span className="hidden sm:inline">brecha</span>
-          </Link>
-          {search ?? <SearchBox />}
+    <>
+      <header className="sticky top-0 z-50 flex-none border-b border-outline-variant bg-surface shadow-sm">
+        <div className="flex h-16 w-full items-center justify-between gap-3 px-4 sm:px-6 lg:px-8">
+          <div className="flex min-w-0 flex-1 items-center gap-3 sm:gap-6">
+            <Link href="/" aria-label="brecha" className="flex shrink-0 items-center gap-2 font-headline text-2xl font-bold tracking-tight text-primary max-md:hidden">
+              <Mountain className="size-7 fill-primary-container text-primary-container" aria-hidden />
+              <span className="hidden sm:inline">brecha</span>
+            </Link>
+            {search ?? <SearchBox />}
+          </div>
+          <nav className="hidden shrink-0 items-center gap-7 md:flex">
+            <Link href="/" className="flex items-center gap-1.5 border-b-2 border-primary pb-1 font-semibold text-primary">
+              Mapa
+            </Link>
+            <Link href="/rutas/nueva" className="flex items-center gap-1.5 border-b-2 border-transparent pb-1 font-semibold text-on-surface-variant transition-colors hover:text-primary">
+              <FilePlus2 className="size-4" aria-hidden />
+              Subir ruta
+            </Link>
+          </nav>
+          <div className="shrink-0 max-md:hidden">
+            <UserMenu />
+          </div>
         </div>
-        <nav className="hidden shrink-0 items-center gap-7 md:flex">
-          <Link href="/" className="flex items-center gap-1.5 border-b-2 border-primary pb-1 font-semibold text-primary">
-            Mapa
-          </Link>
-          <Link href="/rutas/nueva" className="flex items-center gap-1.5 border-b-2 border-transparent pb-1 font-semibold text-on-surface-variant transition-colors hover:text-primary">
-            <FilePlus2 className="size-4" aria-hidden />
-            Subir ruta
-          </Link>
-        </nav>
-        <div className={`shrink-0 ${phoneHidden}`}>
-          <UserMenu />
-        </div>
-      </div>
-      <SuspensionNotice />
-    </header>
+        <SuspensionNotice />
+      </header>
+      {!search && <PageIsland />}
+    </>
   );
 }

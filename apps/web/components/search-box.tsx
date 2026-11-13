@@ -9,9 +9,9 @@ import { describePlace } from "@/lib/places";
 import type { RouteSummary } from "@/lib/routes";
 
 /**
- * Píldora que abre el buscador de lugares. En el explorador recibe la búsqueda actual y `onChange`
- * cambia la URL en sitio y ocupa todo el hueco del encabezado; en las demás páginas elegir algo lleva al mapa
- * (`/?zona=…&lugar=…` o `/?q=…`).
+ * Barra que abre el buscador de lugares; se ve igual en todas las páginas y ocupa el hueco que le den.
+ * En el explorador recibe la búsqueda actual y `onChange` cambia la URL en sitio; sin `onChange`, elegir algo
+ * lleva al mapa (`/?zona=…&lugar=…` o `/?q=…`).
  */
 export function SearchBox({
   query = "",
@@ -42,7 +42,7 @@ export function SearchBox({
         type="button"
         onClick={() => setOpen(true)}
         aria-haspopup="dialog"
-        className={`flex w-full min-w-0 items-center ${onChange ? "" : "max-w-80"} rounded-full border border-outline-variant bg-surface-container-lowest py-1.5 pr-3 pl-3.5 text-left shadow-sm hover:border-primary`}
+        className="flex w-full min-w-0 items-center rounded-full border border-outline-variant bg-surface-container-lowest py-1.5 pr-3 pl-3.5 text-left shadow-sm hover:border-primary"
       >
         <Search className="mr-2.5 size-5 shrink-0 text-primary" aria-hidden />
         <span className="flex min-w-0 flex-1 flex-col">

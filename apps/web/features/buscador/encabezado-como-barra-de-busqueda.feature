@@ -2,7 +2,7 @@
 Característica: Encabezado como barra de búsqueda
   Para llegar rápido a donde quiero caminar
   Como persona que explora rutas de hiking
-  Quiero que el encabezado del explorador sea la barra de búsqueda
+  Quiero que el encabezado de todas las páginas sea la barra de búsqueda
 
   Antecedentes:
     Dado que estoy en la página principal del explorador
@@ -30,6 +30,23 @@ Característica: Encabezado como barra de búsqueda
     Entonces la barra muestra "¿A dónde quieres caminar?"
     Y debajo muestra "Busca un estado o el nombre de un cerro"
 
-  Escenario: Las demás páginas conservan su encabezado actual
-    Cuando abro la página de una ruta
-    Entonces el encabezado muestra el logo y los enlaces de siempre
+  @telefono
+  Esquema del escenario: En teléfono las demás páginas llevan el mismo encabezado
+    Dado que uso un teléfono
+    Cuando abro <página>
+    Entonces el encabezado muestra únicamente la barra de búsqueda
+    Y la barra ocupa todo el ancho del encabezado
+
+    Ejemplos:
+      | página                   |
+      | la página de una ruta    |
+      | la página de una salida  |
+      | mi perfil                |
+      | mis rutas guardadas      |
+      | mis salidas              |
+      | las reglas               |
+
+  Escenario: Fuera del explorador, elegir un lugar en la barra lleva al mapa
+    Dado que abro mis rutas guardadas
+    Cuando elijo un estado en la barra de búsqueda
+    Entonces llego al explorador con ese estado elegido
