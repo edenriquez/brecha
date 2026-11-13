@@ -165,12 +165,16 @@ export function collapseAttribution(map: maplibregl.Map) {
 
 export type LineCoords = [number, number][];
 
-/** Trazo de una ruta (naranja con borde oscuro) debajo de las etiquetas; con `line` vacío se borra. */
-export function setTrack(map: maplibregl.Map, line: LineCoords) {
-  const data: FeatureCollection<LineString> = {
+function lineData(line: LineCoords): FeatureCollection<LineString> {
+  return {
     type: "FeatureCollection",
     features: line.length > 1 ? [{ type: "Feature", properties: {}, geometry: { type: "LineString", coordinates: line } }] : [],
   };
+}
+
+/** Trazo de una ruta (naranja con borde oscuro) debajo de las etiquetas; con `line` vacío se borra. */
+export function setTrack(map: maplibregl.Map, line: LineCoords) {
+  const data = lineData(line);
   const source = map.getSource<maplibregl.GeoJSONSource>("track");
   if (source) {
     source.setData(data);
@@ -180,8 +184,17 @@ export function setTrack(map: maplibregl.Map, line: LineCoords) {
   // encima de las altitudes de las curvas
   const firstLabel = map.getStyle().layers?.find((l) => l.type === "symbol" && l.source !== "contours")?.id;
   const layout = { "line-cap": "round", "line-join": "round" } as const;
+  const width = ["interpolate", ["linear"], ["zoom"], 10, 2, 15, 5] as maplibregl.ExpressionSpecification;
   map.addLayer({ id: "track-casing", type: "line", source: "track", layout, paint: { "line-color": "#a53c00", "line-width": ["interpolate", ["linear"], ["zoom"], 10, 4, 15, 8] } }, firstLabel);
-  map.addLayer({ id: "track-line", type: "line", source: "track", layout, paint: { "line-color": "#ff7a3d", "line-width": ["interpolate", ["linear"], ["zoom"], 10, 2, 15, 5] } }, firstLabel);
+  map.addLayer({ id: "track-line", type: "line", source: "track", layout, paint: { "line-color": "#ff7a3d", "line-width": width } }, firstLabel);
+  // el tramo recorrido, del azul de tu ubicación; lo llena setTrackDone
+  map.addSource("track-done", { type: "geojson", data: lineData([]) });
+  map.addLayer({ id: "track-done", type: "line", source: "track-done", layout, paint: { "line-color": "#1da1f2", "line-width": width } }, firstLabel);
+}
+
+/** Tramo ya recorrido encima del trazo; con `line` vacío se borra. Va después de setTrack. */
+export function setTrackDone(map: maplibregl.Map, line: LineCoords) {
+  map.getSource<maplibregl.GeoJSONSource>("track-done")?.setData(lineData(line));
 }
 
 export function lineBounds(line: LineCoords) {

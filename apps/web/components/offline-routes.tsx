@@ -276,6 +276,12 @@ function Viewer({ slug }: { slug: string }) {
   // con menos de 2 puntos no hay perfil que recorrer
   const routeProfile = route?.profile && route.profile.length >= 2 ? route.profile : null;
   const reversed = useMemo(() => routeProfile && reverseProfile(routeProfile), [routeProfile]);
+  // tramo recorrido: del inicio del perfil activo hasta donde vas, solo con la ruta comenzada
+  const at = startedAt ? (progress?.index ?? null) : null;
+  const done = useMemo(() => {
+    const p = back ? reversed : routeProfile;
+    return p && at ? p.slice(0, at + 1).map(([, , lng, lat]): [number, number] => [lng, lat]) : null;
+  }, [back, reversed, routeProfile, at]);
   const map = ready?.map;
   const zone = !!route?.layers || !!layerBounds;
   const stored = route ? savedOptions(route) : null;
@@ -391,6 +397,7 @@ function Viewer({ slug }: { slug: string }) {
         offline
         terrain3d={layers.terrain3d}
         reversed={back}
+        done={done}
         onReady={(r) => {
           setReady(r);
           // recorrido que ya estaba en curso: el GPS se prende solo
