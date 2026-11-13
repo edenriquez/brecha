@@ -3,7 +3,7 @@
 import { useEffect, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { OpenMapLink } from "@/components/open-map-link";
-import { addHillshade, addTopoLayers, collapseAttribution, lineBounds, MAP_STYLE, maplibregl, setTerrain3d, setTrack, TERRAIN_3D_PITCH, type LineCoords } from "@/lib/maplibre";
+import { addHillshade, addTopoLayers, collapseAttribution, lineBounds, MAP_STYLE, maplibregl, setTerrain3d, setTrack, setTrackDone, TERRAIN_3D_PITCH, type LineCoords } from "@/lib/maplibre";
 import { OFFLINE_ZOOM, offlineBounds } from "@/lib/offline";
 
 const LABEL = "flex items-center gap-2 rounded-full border border-outline-variant/80 bg-surface-container-lowest/95 px-2.5 py-1.5 shadow-md";
@@ -27,6 +27,7 @@ export function routeCloses(line: LineCoords) {
  * `onPosition`: cada lectura del GPS del visor. `reversed`: de regreso, "Inicio" y "Fin" se intercambian.
  * `onReady`: el mapa ya cargado y cómo prender o apagar el GPS (solo `offline`, que no muestra controles propios).
  * `onTracking`: si el GPS sigue tu ubicación.
+ * `done`: el tramo ya recorrido, en azul sobre el trazo.
  */
 export function TrackMap({
   line,
@@ -38,6 +39,7 @@ export function TrackMap({
   reversed = false,
   onReady,
   onTracking,
+  done = null,
 }: {
   line: LineCoords;
   hover: [number, number] | null;
@@ -48,6 +50,7 @@ export function TrackMap({
   reversed?: boolean;
   onReady?: (ready: { map: maplibregl.Map; locate: () => void } | null) => void;
   onTracking?: (on: boolean) => void;
+  done?: LineCoords | null;
 }) {
   const router = useRouter();
   const container = useRef<HTMLDivElement>(null);
@@ -55,6 +58,7 @@ export function TrackMap({
   const styleLoaded = useRef(false);
   const hoverMarker = useRef<maplibregl.Marker | null>(null);
   const terrain3dRef = useRef(terrain3d);
+  const doneRef = useRef(done);
   const openHrefRef = useRef(openHref);
   useEffect(() => {
     openHrefRef.current = openHref;
@@ -108,6 +112,7 @@ export function TrackMap({
       addHillshade(map);
       addTopoLayers(map, offline);
       setTrack(map, line);
+      setTrackDone(map, doneRef.current ?? []);
       setTerrain3d(map, terrain3dRef.current);
       if (terrain3dRef.current) map.easeTo({ pitch: TERRAIN_3D_PITCH, duration: 1000 });
       collapseAttribution(map);
@@ -147,6 +152,12 @@ export function TrackMap({
     setTerrain3d(map, terrain3d);
     map.easeTo(terrain3d ? { pitch: TERRAIN_3D_PITCH, duration: 1000 } : { pitch: 0, bearing: 0, duration: 700 });
   }, [terrain3d]);
+
+  useEffect(() => {
+    doneRef.current = done;
+    const map = mapRef.current;
+    if (map && styleLoaded.current) setTrackDone(map, done ?? []);
+  }, [done]);
 
   // solo cambia el texto: recrear el mapa perdería la vista
   useEffect(() => {
