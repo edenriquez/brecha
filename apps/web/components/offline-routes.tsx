@@ -24,8 +24,13 @@ function List() {
   // el service worker manda aquí lo que no pudo abrir sin señal; solo del mismo origen (el navegador quita tabs y lee /\ como //)
   // location existe: useSearchParams en una página estática solo renderiza en el cliente
   const desde = useSearchParams().get("desde");
-  const retry = desde ? new URL(desde, location.origin) : null;
-  const retryHref = retry?.origin === location.origin ? retry.pathname + retry.search : null;
+  let retryHref: string | null = null;
+  try {
+    const retry = desde ? new URL(desde, location.origin) : null;
+    if (retry?.origin === location.origin) retryHref = retry.pathname + retry.search;
+  } catch {
+    // ?desde= mal formado: sin enlace de reintento
+  }
 
   useEffect(() => {
     (offlineSupported() ? listOfflineRoutes() : Promise.resolve([])).then(setRoutes);
