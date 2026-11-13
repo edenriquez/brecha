@@ -40,4 +40,5 @@ jobs:
       - uses: supabase/setup-cli@v1
         with: { version: latest }
       - run: supabase link --project-ref "${{ secrets.SUPABASE_PROJECT_ID }}"
-      - run: supabase db push
+      # la CLI 3 apunta al stack local por defecto: sin --remote no llega al proyecto
+      - run: supabase db push --remote
