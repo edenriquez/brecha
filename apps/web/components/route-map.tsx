@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { ArrowLeft, Binoculars, MountainSnow, Rotate3d, Route, Satellite, Sun, Tent, Users, Waves } from "lucide-react";
 import clsx from "clsx";
 import { RouteMapPanel, type PanelView } from "@/components/route-map-panel";
@@ -30,6 +30,7 @@ import { CAMP_COLORS, ROAD_COLORS, ROAD_LABELS, VIEWPOINT_COLOR, VIEW_ZONE_COLOR
 const OVERLAYS = { lidar: setLidar, waterfalls: setWaterfalls, viewpoints: setViewpoints, camps: setCamps, roads: setRoads };
 type Overlay = keyof typeof OVERLAYS;
 type Overlays = Record<Overlay, boolean>;
+const LONG_PRESS_MS = 450;
 const NO_PADDING = { top: 0, bottom: 0, left: 0, right: 0 };
 const NO_OVERLAYS: Overlays = { lidar: false, waterfalls: false, viewpoints: false, camps: false, roads: false };
 
@@ -86,13 +87,14 @@ const row = (icon: string, label: string, value: string) =>
  * Ficha de la ruta al pasar el cursor por su pin: arriba, vidrio esmerilado con la foto de fondo, translúcida y a
  * todo lo ancho (nombre y dificultad encima); abajo, un bloque sólido con distancia, desnivel y duración.
  * Vive dentro del botón del pin: pasar el cursor del pin a la ficha no la cierra, y un clic en ella (o en su botón
- * de reproducir) elige la ruta igual que el pin. La foto se pide hasta la primera vez que se muestra (`data-src`).
+ * de reproducir) elige la ruta igual que el pin. En pantallas táctiles se abre al mantener presionado el pin
+ * (`data-peek` en el botón) y se cierra al tocar fuera. La foto se pide hasta la primera vez que se muestra (`data-src`).
  */
 function hoverCard(route: RouteSummary) {
   // el relleno vertical une la ficha con el pin: sin hueco, el cursor no la pierde al subir hacia ella;
   // solo recibe el cursor mientras se ve, para que no tape el mapa alrededor de cada pin
   const box = document.createElement("span");
-  box.className = "pointer-events-none absolute bottom-full left-1/2 block -translate-x-1/2 py-2 text-left opacity-0 transition-opacity duration-200 group-hover:pointer-events-auto group-hover:opacity-100";
+  box.className = "pointer-events-none absolute bottom-full left-1/2 block -translate-x-1/2 py-2 text-left opacity-0 transition-opacity duration-200 group-hover:pointer-events-auto group-hover:opacity-100 group-data-[peek]:pointer-events-auto group-data-[peek]:opacity-100";
   box.style.width = `${CARD_W}px`;
   const cover = route.cover_url
     ? `<img alt="" data-src="/_next/image?url=${encodeURIComponent(route.cover_url)}&w=640&q=75" class="absolute inset-0 h-full w-full object-cover opacity-75" />`
@@ -102,7 +104,7 @@ function hoverCard(route: RouteSummary) {
       ? `<span class="absolute top-[108px] right-4 flex items-center gap-1.5 text-[11px] font-medium [text-shadow:0_1px_2px_rgb(0_0_0/0.4)]"><i class="size-1.5 rounded-full bg-secondary-container"></i>${outingsLabel(route.upcoming_outings)}</span>`
       : "";
   box.innerHTML = `
-    <span data-card class="block origin-bottom scale-95 overflow-hidden bg-on-surface/25 text-white shadow-2xl ring-1 ring-white/40 backdrop-blur-xl transition-transform duration-200 group-hover:scale-100">
+    <span data-card class="block origin-bottom scale-95 overflow-hidden bg-on-surface/25 text-white shadow-2xl ring-1 ring-white/40 backdrop-blur-xl transition-transform duration-200 group-hover:scale-100 group-data-[peek]:scale-100">
       <span class="relative block h-[216px]">
         ${cover}
         <span class="absolute inset-0 bg-gradient-to-b from-black/50 via-black/5 to-black/25"></span>
@@ -221,6 +223,23 @@ export function RouteMap({
   const onPeekRef = useRef(onPeek);
   const framedSelection = useRef<string | null>(null);
   const hadSelection = useRef(false);
+  // pin con la ficha abierta por pulsación larga (táctil) y cómo devolverlo a su capa
+  const peeked = useRef<HTMLElement | null>(null);
+  const lowerPeeked = useRef<() => void>(() => {});
+  const closePeek = useCallback(() => {
+    if (!peeked.current) return;
+    delete peeked.current.dataset.peek;
+    lowerPeeked.current();
+    peeked.current = null;
+  }, []);
+  // tocar fuera del pin (el mapa, otro pin, un control) cierra la ficha
+  useEffect(() => {
+    const outside = (e: PointerEvent) => {
+      if (peeked.current && !(e.target instanceof Node && peeked.current.contains(e.target))) closePeek();
+    };
+    document.addEventListener("pointerdown", outside, true);
+    return () => document.removeEventListener("pointerdown", outside, true);
+  }, [closePeek]);
   // el recorrido arranca solo: si la ruta llega elegida, espera a que el estilo del mapa cargue
   const [styleReady, setStyleReady] = useState(false);
   const [overlays, setOverlays] = useState(NO_OVERLAYS);
@@ -241,6 +260,13 @@ export function RouteMap({
   if (panelOwner !== selectedId) {
     setPanelOwner(selectedId);
     setPanelView("perfil");
+    // las capas son de la ruta elegida: al volver al mapa de todas las rutas se apagan (ahí no hay cómo quitarlas)
+    if (!selectedId) {
+      setOverlays(NO_OVERLAYS);
+      setSatelliteOn(false);
+      setSunOn(false);
+      setTerrain3dOn(false);
+    }
   }
   useEffect(() => {
     onSelectRef.current = onSelect;
@@ -315,14 +341,49 @@ export function RouteMap({
       const card = hoverCard(route);
       button.classList.add("group");
       button.append(el, card);
-      button.addEventListener("click", () => onSelectRef.current(route.id));
-      button.addEventListener("pointerenter", () => {
+      const lower = () => (button.style.zIndex = route.id === selectedRef.current ? "10" : "");
+      const show = () => {
         onPeekRef.current(route.id);
         placeCard(card, button, map.getContainer());
         // la ficha va sobre los demás pines y sobre los controles del mapa
         button.style.zIndex = "30";
+      };
+      button.addEventListener("pointerenter", (e) => e.pointerType === "mouse" && show());
+      button.addEventListener("pointerleave", (e) => e.pointerType === "mouse" && lower());
+
+      // táctil: un toque elige la ruta; mantener presionado abre la ficha, que se queda hasta tocar fuera
+      let press = 0;
+      let from = { x: 0, y: 0 };
+      let held = false;
+      const cancel = () => clearTimeout(press);
+      button.addEventListener("pointerdown", (e) => {
+        if (e.pointerType === "mouse") return;
+        held = false;
+        from = { x: e.clientX, y: e.clientY };
+        cancel();
+        press = window.setTimeout(() => {
+          held = true;
+          if (peeked.current && peeked.current !== button) closePeek();
+          peeked.current = button;
+          lowerPeeked.current = lower;
+          show();
+          button.dataset.peek = "";
+        }, LONG_PRESS_MS);
       });
-      button.addEventListener("pointerleave", () => (button.style.zIndex = route.id === selectedRef.current ? "10" : ""));
+      // arrastrar el mapa desde el pin no es una pulsación larga
+      button.addEventListener("pointermove", (e) => Math.hypot(e.clientX - from.x, e.clientY - from.y) > 10 && cancel());
+      button.addEventListener("pointerup", cancel);
+      button.addEventListener("pointercancel", cancel);
+      // el menú del sistema al mantener presionado taparía la ficha
+      button.addEventListener("contextmenu", (e) => e.preventDefault());
+      button.style.setProperty("-webkit-touch-callout", "none");
+      button.style.userSelect = "none";
+      button.addEventListener("click", () => {
+        // al soltar una pulsación larga llega un clic: ese no elige la ruta; el siguiente (en el pin o en la ficha) sí
+        if (held) return void (held = false);
+        closePeek();
+        onSelectRef.current(route.id);
+      });
       const marker = new maplibregl.Marker({ element: button, anchor: "bottom" }).setLngLat([route.lng, route.lat]).addTo(map);
       registry.set(route.id, { marker, el, route });
     });
@@ -335,7 +396,7 @@ export function RouteMap({
     const bounds = new maplibregl.LngLatBounds();
     routes.forEach((r) => bounds.extend([r.lng, r.lat]));
     frame(map, { bounds, options: { padding: 80, maxZoom: 11, duration: animate ? 600 : 0 } }, pendingFrame);
-  }, [routes]);
+  }, [routes, closePeek]);
 
   // la zona que llega en la URL o del buscador de lugares se encuadra; la que se elige con el botón ya es la vista
   useEffect(() => {
