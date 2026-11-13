@@ -21,9 +21,11 @@ function List() {
   const [routes, setRoutes] = useState<OfflineRoute[] | null>(null);
   const [usage, setUsage] = useState<number | null>(null);
   const iosTab = useIosSafariTab();
-  // el service worker manda aquí lo que no pudo abrir sin señal; solo rutas internas (el navegador lee /\ como //)
+  // el service worker manda aquí lo que no pudo abrir sin señal; solo del mismo origen (el navegador quita tabs y lee /\ como //)
+  // location existe: useSearchParams en una página estática solo renderiza en el cliente
   const desde = useSearchParams().get("desde");
-  const retryHref = desde?.startsWith("/") && !/^\/[/\\]/.test(desde) ? desde : null;
+  const retry = desde ? new URL(desde, location.origin) : null;
+  const retryHref = retry?.origin === location.origin ? retry.pathname + retry.search : null;
 
   useEffect(() => {
     (offlineSupported() ? listOfflineRoutes() : Promise.resolve([])).then(setRoutes);
