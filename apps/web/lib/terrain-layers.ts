@@ -1,7 +1,8 @@
 "use client";
 
-import type { FeatureCollection, Geometry, Position } from "geojson";
-import { BASE, onClickShow, overlayAnchor, popupContent } from "@/lib/lidar-layer";
+import type { FeatureCollection, Point } from "geojson";
+import { PMTiles } from "pmtiles";
+import { BASE, onClickShow, overlayAnchor, popupContent, registerPmtiles } from "@/lib/lidar-layer";
 import { maplibregl } from "@/lib/maplibre";
 
 export const VIEWPOINT_COLOR = "#c2185b";
@@ -103,17 +104,10 @@ function roadPopup(r: Road) {
   ]);
 }
 
-function extend(bounds: maplibregl.LngLatBounds, geometry: Geometry) {
-  const add = (p: Position) => bounds.extend(p as [number, number]);
-  if (geometry.type === "Point") add(geometry.coordinates);
-  else if (geometry.type === "LineString") geometry.coordinates.forEach(add);
-  else if (geometry.type === "Polygon") geometry.coordinates[0].forEach(add);
-}
-
 async function load(file: string) {
-  const data: FeatureCollection = await fetch(`${BASE}/${file}`).then((r) => r.json());
+  const data: FeatureCollection<Point> = await fetch(`${BASE}/${file}`).then((r) => r.json());
   const bounds = new maplibregl.LngLatBounds();
-  data.features.forEach((f) => extend(bounds, f.geometry));
+  data.features.forEach((f) => bounds.extend(f.geometry.coordinates as [number, number]));
   return { data, bounds };
 }
 
@@ -125,13 +119,15 @@ const pointPaint = (color: maplibregl.ExpressionSpecification | string, small = 
 });
 
 async function addViewpoints(map: maplibregl.Map) {
-  const [zones, points] = await Promise.all([load("zonas_volcanes.geojson"), load("miradores.geojson")]);
-  map.addSource("view-zones", { type: "geojson", data: zones.data });
+  const points = await load("miradores.geojson");
+  registerPmtiles();
+  map.addSource("view-zones", { type: "vector", url: `pmtiles://${BASE}/zonas_volcanes.pmtiles` });
   map.addLayer(
     {
       id: "view-zones",
       type: "fill",
       source: "view-zones",
+      "source-layer": "zonas_volcanes",
       paint: {
         "fill-color": ["match", ["get", "volcan"], "ambos", VIEW_ZONE_COLORS.ambos, "izta", VIEW_ZONE_COLORS.izta, VIEW_ZONE_COLORS.popo],
         "fill-opacity": 0.14,
@@ -165,8 +161,11 @@ async function addCamps(map: maplibregl.Map) {
 }
 
 async function addRoads(map: maplibregl.Map) {
-  const roads = await load("brechas.geojson");
-  map.addSource("roads", { type: "geojson", data: roads.data, attribution: ROADS_ATTRIBUTION });
+  const url = `${BASE}/brechas.pmtiles`;
+  // el área sale del encabezado del PMTiles, sin bajar los caminos
+  const { minLon, minLat, maxLon, maxLat } = await new PMTiles(url).getHeader();
+  registerPmtiles();
+  map.addSource("roads", { type: "vector", url: `pmtiles://${url}`, attribution: ROADS_ATTRIBUTION });
   const width = (terraceria: number, brecha: number, vereda: number): maplibregl.ExpressionSpecification => [
     "match", ["get", "tipo"],
     "terraceria", terraceria,
@@ -181,6 +180,7 @@ async function addRoads(map: maplibregl.Map) {
       id: "roads-casing",
       type: "line",
       source: "roads",
+      "source-layer": "brechas",
       layout,
       paint: {
         "line-color": "#fffaf0",
@@ -195,6 +195,7 @@ async function addRoads(map: maplibregl.Map) {
       id: "roads",
       type: "line",
       source: "roads",
+      "source-layer": "brechas",
       layout,
       paint: {
         "line-color": ["match", ["get", "tipo"], "terraceria", ROAD_COLORS.terraceria, "brecha", ROAD_COLORS.brecha, ROAD_COLORS.vereda],
@@ -204,7 +205,7 @@ async function addRoads(map: maplibregl.Map) {
     below,
   );
   onClickShow(map, "roads", roadPopup);
-  return roads.bounds;
+  return new maplibregl.LngLatBounds([minLon, minLat], [maxLon, maxLat]);
 }
 
 /** Prende o apaga un grupo de capas que se crean la primera vez; resuelve con el área que cubren. */

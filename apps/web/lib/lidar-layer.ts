@@ -36,6 +36,13 @@ const OVERLAYS = ["lidar-coverage", "lidar-candidates", "lidar-findings"];
 let protocol: Protocol | null = null;
 const loading = new WeakMap<maplibregl.Map, Promise<Manifest>>();
 
+/** Registra el protocolo pmtiles:// en maplibre una sola vez. */
+export function registerPmtiles() {
+  if (protocol) return;
+  protocol = new Protocol();
+  maplibregl.addProtocol("pmtiles", protocol.tile);
+}
+
 export function popupContent(lines: [className: string, text: string][]) {
   const root = document.createElement("div");
   root.className = "max-w-64 space-y-1 font-body text-xs text-on-surface";
@@ -110,10 +117,7 @@ export function overlayAnchor(map: maplibregl.Map, kind: "raster" | "lines") {
 
 async function addLayers(map: maplibregl.Map): Promise<Manifest> {
   const manifest: Manifest = await fetch(`${BASE}/capa.json`).then((r) => r.json());
-  if (!protocol) {
-    protocol = new Protocol();
-    maplibregl.addProtocol("pmtiles", protocol.tile);
-  }
+  registerPmtiles();
   manifest.partes.forEach((file, i) => {
     const id = `lidar-relief-${i}`;
     map.addSource(id, { type: "raster", url: `pmtiles://${BASE}/${file}`, tileSize: 256, attribution: ATTRIBUTION });
@@ -187,7 +191,8 @@ const waterfallsLoading = new WeakMap<maplibregl.Map, Promise<maplibregl.LngLatB
 async function addWaterfallLayers(map: maplibregl.Map) {
   const waterfalls: FeatureCollection<Point> = await fetch(`${BASE}/cascadas.geojson`).then((r) => r.json());
   const below = overlayAnchor(map, "lines");
-  map.addSource("streams", { type: "geojson", data: `${BASE}/cauces.geojson`, attribution: ATTRIBUTION });
+  registerPmtiles();
+  map.addSource("streams", { type: "vector", url: `pmtiles://${BASE}/cauces.pmtiles`, attribution: ATTRIBUTION });
   // ancho según el área que drena el cauce; los arroyos chicos solo de cerca
   const width = (k: number): maplibregl.ExpressionSpecification => [
     "interpolate", ["linear"], ["get", "cuenca_km2"],
@@ -201,8 +206,8 @@ async function addWaterfallLayers(map: maplibregl.Map) {
     "line-width": ["interpolate", ["linear"], ["zoom"], 9, width(0.6), 15, width(2)] as maplibregl.ExpressionSpecification,
   };
   const layout = { "line-cap": "round", "line-join": "round" } as const;
-  map.addLayer({ id: "streams-main", type: "line", source: "streams", filter: [">=", ["get", "cuenca_km2"], 10], layout, paint }, below);
-  map.addLayer({ id: "streams-minor", type: "line", source: "streams", minzoom: 11, filter: ["<", ["get", "cuenca_km2"], 10], layout, paint }, below);
+  map.addLayer({ id: "streams-main", type: "line", source: "streams", "source-layer": "cauces", filter: [">=", ["get", "cuenca_km2"], 10], layout, paint }, below);
+  map.addLayer({ id: "streams-minor", type: "line", source: "streams", "source-layer": "cauces", minzoom: 11, filter: ["<", ["get", "cuenca_km2"], 10], layout, paint }, below);
   map.addSource("waterfalls", { type: "geojson", data: waterfalls });
   map.addLayer({
     id: "waterfalls",
