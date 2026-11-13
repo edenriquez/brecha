@@ -21,7 +21,7 @@ export function DownloadPill() {
   }, [active]);
 
   if (!active || pathname === "/descargas") return null;
-  const current = Object.values(routes ?? {}).find((d) => d.status === "bajando");
+  const current = Object.values(routes ?? {}).find((d) => d.status === "bajando" || d.status === "en-pausa");
   const percent = current?.status === "bajando" ? Math.floor((current.done / current.total) * 100) : 0;
   return (
     <Link
@@ -34,7 +34,7 @@ export function DownloadPill() {
         aria-hidden
       />
       <span className="flex-1">
-        Descargando {Math.min(done + 1, total)} de {total} {total === 1 ? "ruta" : "rutas"} · {percent}%
+        {current?.status === "en-pausa" ? "En pausa · se reanuda sola" : `Descargando ${Math.min(done + 1, total)} de ${total} ${total === 1 ? "ruta" : "rutas"} · ${percent}%`}
       </span>
       <ChevronRight className="size-5" aria-hidden />
     </Link>

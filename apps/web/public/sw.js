@@ -43,6 +43,8 @@ self.addEventListener("fetch", (event) => {
     event.respondWith(navigate(request, url));
     return;
   }
+  // la descarga de una ruta pide con `cache: "reload"`: va directo a la red, sin el plazo de TILE_TIMEOUT_MS
+  if (request.cache === "reload") return;
   if (url.origin === self.location.origin) {
     if (url.pathname.startsWith("/_next/static/")) event.respondWith(staticAsset(event));
     else if (STATIC_FILES.includes(url.pathname)) event.respondWith(cacheFirst(APP_CACHE, request));

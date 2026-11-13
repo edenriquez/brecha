@@ -142,7 +142,7 @@ export function LayerSheet({
 
   const saved = savedOptions(route);
   const radiusKm = route.radiusKm ?? DEFAULT_RADIUS_KM;
-  const busy = download?.status === "bajando" || download?.status === "en-cola";
+  const busy = download?.status === "bajando" || download?.status === "en-cola" || download?.status === "en-pausa";
   const percent = download?.status === "bajando" ? Math.floor((download.done / download.total) * 100) : 0;
   const lidarSaved = saved.lidar;
   function add(option: keyof DownloadOptions) {
@@ -224,7 +224,7 @@ export function LayerSheet({
                     <CircleCheck className="size-4 shrink-0 fill-primary text-on-primary" aria-hidden />
                   </span>
                 ) : loading ? (
-                  <span className="font-semibold text-primary">Descargando… {percent}%</span>
+                  <span className="font-semibold text-primary">{download?.status === "en-pausa" ? "En pausa" : `Descargando… ${percent}%`}</span>
                 ) : online ? (
                   <span className="text-on-surface-variant">No descargado</span>
                 ) : (

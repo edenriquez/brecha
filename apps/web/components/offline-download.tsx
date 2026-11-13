@@ -10,7 +10,7 @@ import { cancelDownload, deleteOfflineRoute, estimateDownload, formatMb, queueDo
 const DownloadSheet = dynamic(() => import("./download-sheet").then((m) => m.DownloadSheet), { ssr: false });
 
 type State =
-  | { step: "inicio" | "confirmar" | "en-cola" }
+  | { step: "inicio" | "confirmar" | "en-cola" | "en-pausa" }
   | { step: "bajando"; done: number; total: number }
   | { step: "guardada"; bytes: number }
   | { step: "error"; message: string };
@@ -33,6 +33,7 @@ export function OfflineDownload({ route, line, profile }: { route: OfflineRouteI
   else if (download?.status === "lista") state = { step: "guardada", bytes: download.bytes };
   else if (download?.status === "bajando") state = { step: "bajando", done: download.done, total: download.total };
   else if (download?.status === "en-cola") state = { step: "en-cola" };
+  else if (download?.status === "en-pausa") state = { step: "en-pausa" };
   else if (download?.error) state = { step: "error", message: download.error };
 
   function openSheet() {
@@ -68,7 +69,7 @@ export function OfflineDownload({ route, line, profile }: { route: OfflineRouteI
               {state.step === "error" ? "Reintentar" : "Guardar sin conexión"}
             </button>
           )}
-          {(state.step === "bajando" || state.step === "en-cola") && (
+          {(state.step === "bajando" || state.step === "en-cola" || state.step === "en-pausa") && (
             <button type="button" onClick={() => cancelDownload(route.slug)} className={`${BUTTON} border border-outline-variant hover:border-error hover:text-error`}>
               <X className="size-4" aria-hidden />
               Cancelar
@@ -100,6 +101,8 @@ export function OfflineDownload({ route, line, profile }: { route: OfflineRouteI
       )}
 
       {state.step === "en-cola" && <p className="font-mono text-[11px] text-on-surface-variant">En cola · no cierres esta página</p>}
+
+      {state.step === "en-pausa" && <p className="font-mono text-[11px] text-secondary">Sin conexión · se reanuda sola</p>}
 
       {state.step === "error" && <p className="text-xs font-medium text-error">{state.message}</p>}
 
