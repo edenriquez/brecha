@@ -17,17 +17,16 @@ function segmentM(p: { lng: number; lat: number }, a: ProfilePoint, b: ProfilePo
 
 /**
  * Dónde vas sobre el perfil. `last` es el índice de la lectura anterior: en un ida y vuelta por el mismo camino
- * hay dos puntos casi igual de cerca y se queda con el más próximo a `last` (sin él, el menor).
+ * hay dos puntos casi igual de cerca, así que el índice no retrocede mientras haya un candidato adelante.
  */
 export function trackProgress(profile: ProfilePoint[], pos: { lng: number; lat: number }, last: number | null) {
   const dists = profile.map(([, , lng, lat]) => haversineM(pos, { lng, lat }));
   const min = Math.min(...dists);
-  const ref = last ?? 0;
-  let index = -1;
-  dists.forEach((d, i) => {
-    // empate: el de adelante, para que en la vuelta del ida y vuelta siga por la segunda mitad
-    if (d <= min + 30 && (index < 0 || Math.abs(i - ref) <= Math.abs(index - ref))) index = i;
-  });
+  const near = dists.flatMap((d, i) => (d <= min + 30 ? [i] : []));
+  const ahead = last === null ? [] : near.filter((i) => i >= last);
+  // sin lectura anterior o si retrocedió: el menor; si no, el más cercano en los próximos 300 m, o tras un hueco de GPS el primero adelante
+  const soon = ahead.filter((i) => profile[i][0] - profile[last!][0] <= 0.3);
+  const index = !ahead.length ? near[0] : soon.length ? soon.reduce((a, b) => (dists[b] < dists[a] ? b : a)) : ahead[0];
   // al tramo y no al punto: entre puntos del perfil puede haber más de 50 m
   let offM = min;
   for (let i = 1; i < profile.length; i++) offM = Math.min(offM, segmentM(pos, profile[i - 1], profile[i]));
