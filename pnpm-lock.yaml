@@ -22,6 +22,9 @@ importers:
       lucide-react:
         specifier: ^1.47.0
         version: 1.59.0(@types/react@19.3.0)(react@19.2.8)
+      maplibre-contour:
+        specifier: ^0.1.1
+        version: 0.1.1
       maplibre-gl:
         specifier: ^6.10.0
         version: 6.15.0
@@ -1649,6 +1652,9 @@ packages:
 
   magic-string@0.30.21:
     resolution: {integrity: sha512-vd2F4YUyEXKGcLHoq+TEyCjxueSeHnFxyyjNp80yg0XV4vUhnDer/lvvlqM/arB5bXQN5K2/3oinyCRyx8T2CQ==}
+
+  maplibre-contour@0.1.1:
+    resolution: {integrity: sha512-0m267124bx+LJ5zM1mpB23uvO4sCrgOb4dWgwbUbGWGsDsWNA4g93XTXPoRQga6GAD6TDI7tzyowBzdADSPusg==}
 
   maplibre-gl@6.15.0:
     resolution: {integrity: sha512-kxFetbvUHDOVaAP1CYb226Mdk2QhzIPddqM0xJTFD35wu78Mpd6NM7+H68ALjc6Oa0kAOX5EAdMKyvD2u3qfcg==}
@@ -3830,6 +3836,8 @@ snapshots:
   magic-string@0.30.21:
     dependencies:
       '@jridgewell/sourcemap-codec': 1.6.0
+
+  maplibre-contour@0.1.1: {}
 
   maplibre-gl@6.15.0:
     dependencies:

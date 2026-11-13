@@ -3,6 +3,7 @@
 import type { FeatureCollection, LineString } from "geojson";
 import * as maplibregl from "maplibre-gl";
 import "maplibre-gl/dist/maplibre-gl.css";
+import mlcontour from "maplibre-contour";
 import { DEM_TILES } from "@/lib/dem";
 import { MAP_STYLE, SATELLITE_TILES } from "@/lib/map-sources";
 
@@ -28,9 +29,46 @@ export function addHillshade(map: maplibregl.Map) {
 const NAME: maplibregl.ExpressionSpecification = ["coalesce", ["get", "name:es"], ["get", "name"]];
 const RANK: maplibregl.ExpressionSpecification = ["coalesce", ["get", "rank"], 99];
 const HIKING_POIS = ["alpine_hut", "wilderness_hut", "shelter", "viewpoint", "camp_site", "picnic_site", "attraction", "waterfall", "cave_entrance", "spring"];
+// hasta z11 solo el principal de cada zona, hasta z13 los tres primeros
+const PEAKS: maplibregl.ExpressionSpecification = ["all", ["has", "name"], ["in", ["get", "class"], ["literal", ["peak", "volcano"]]], ["step", ["zoom"], ["==", RANK, 1], 12, ["<=", RANK, 3], 14, true]];
+const CONTOUR_BROWN = "#6f4e37";
 
-/** Nombres de cerros, pasos, refugios y áreas protegidas que ya vienen en las teselas. Llamar después de addHillshade. */
-export function addPlaceNames(map: maplibregl.Map) {
+// curvas de nivel generadas del mismo modelo de elevación que el sombreado
+let contourTiles: string | undefined;
+function contourUrl() {
+  if (!contourTiles) {
+    const dem = new mlcontour.DemSource({ url: DEM_TILES, encoding: "terrarium", maxzoom: 14 });
+    dem.setupMaplibre(maplibregl);
+    contourTiles = dem.contourProtocolUrl({ thresholds: { 11: [100, 500], 13: [50, 200], 14: [20, 100] } });
+  }
+  return contourTiles;
+}
+
+/** Curvas de nivel, veredas y nombres de cerros, pasos, refugios y áreas protegidas. Llamar después de addHillshade. */
+export function addTopoLayers(map: maplibregl.Map) {
+  // encima del sombreado y del satélite, debajo de caminos, ruta y nombres
+  const firstLabel = map.getStyle().layers?.find((l) => l.type === "symbol")?.id;
+  map.addSource("contours", { type: "vector", tiles: [contourUrl()], minzoom: 11, maxzoom: 14 });
+  const major: maplibregl.ExpressionSpecification = ["==", ["get", "level"], 1];
+  map.addLayer({ id: "contour-lines", type: "line", source: "contours", "source-layer": "contours", paint: { "line-color": CONTOUR_BROWN, "line-opacity": ["case", major, 0.5, 0.3], "line-width": ["case", major, 1, 0.6] } }, firstLabel);
+  const paths = (cls: string): maplibregl.ExpressionSpecification => ["==", ["get", "class"], cls];
+  // halo blanco para que se lean sobre el satélite
+  map.addLayer({ id: "trail-casing", type: "line", source: "openmaptiles", "source-layer": "transportation", minzoom: 12, filter: ["in", ["get", "class"], ["literal", ["path", "track"]]], paint: { "line-color": "#ffffff", "line-opacity": 0.5, "line-width": ["interpolate", ["linear"], ["zoom"], 12, 2.5, 16, 5.5] } }, firstLabel);
+  map.addLayer({ id: "trail-paths", type: "line", source: "openmaptiles", "source-layer": "transportation", minzoom: 12, filter: paths("path"), paint: { "line-color": "#3a3a36", "line-dasharray": [1, 1.5], "line-width": ["interpolate", ["linear"], ["zoom"], 12, 1, 16, 2.5] } }, firstLabel);
+  map.addLayer({ id: "trail-tracks", type: "line", source: "openmaptiles", "source-layer": "transportation", minzoom: 12, filter: paths("track"), paint: { "line-color": "#3a3a36", "line-dasharray": [3, 1.5], "line-width": ["interpolate", ["linear"], ["zoom"], 12, 1.5, 16, 3.5] } }, firstLabel);
+  map.addLayer(
+    {
+      id: "contour-labels",
+      type: "symbol",
+      source: "contours",
+      "source-layer": "contours",
+      filter: major,
+      layout: { "symbol-placement": "line", "text-field": ["concat", ["number-format", ["get", "ele"], { locale: "en-US" }], " m"], "text-font": ["Noto Sans Regular"], "text-size": 10 },
+      paint: { "text-color": CONTOUR_BROWN, "text-halo-color": "#ffffff", "text-halo-width": 1.5 },
+    },
+    firstLabel,
+  );
+
   // debajo de pueblos y ciudades: en la colisión ganan ellos
   const firstPlace = map.getStyle().layers?.find((l) => "source-layer" in l && l["source-layer"] === "place")?.id;
   const label = (
@@ -41,7 +79,7 @@ export function addPlaceNames(map: maplibregl.Map) {
     font: maplibregl.DataDrivenPropertyValueSpecification<string[]>,
     size: number,
     color = "#1c1c18",
-    field: maplibregl.ExpressionSpecification = NAME,
+    layout: maplibregl.SymbolLayerSpecification["layout"] = {},
   ) =>
     map.addLayer(
       {
@@ -51,7 +89,7 @@ export function addPlaceNames(map: maplibregl.Map) {
         "source-layer": sourceLayer,
         minzoom,
         filter: ["all", ["has", "name"], filter],
-        layout: { "text-field": field, "text-font": font, "text-size": size, "symbol-sort-key": RANK, "text-max-width": 8 },
+        layout: { "text-field": NAME, "text-font": font, "text-size": size, "symbol-sort-key": RANK, "text-max-width": 8, ...layout },
         paint: { "text-color": color, "text-halo-color": "#ffffff", "text-halo-width": 1.5 },
       },
       firstPlace,
@@ -59,17 +97,13 @@ export function addPlaceNames(map: maplibregl.Map) {
   label("park-names", "park", 9, ["all", ["==", ["geometry-type"], "Point"], ["in", ["get", "class"], ["literal", ["national_park", "nature_reserve"]]]], ["Noto Sans Italic"], 12, "#2f5d3a");
   label("poi-names", "poi", 13, ["in", ["get", "subclass"], ["literal", HIKING_POIS]], ["Noto Sans Regular"], 11);
   label("saddle-names", "mountain_peak", 12, ["==", ["get", "class"], "saddle"], ["Noto Sans Italic"], 11);
-  // hasta z11 solo el principal de cada zona, hasta z13 los tres primeros; la altitud desde z11
-  label(
-    "peak-names",
-    "mountain_peak",
-    9,
-    ["all", ["in", ["get", "class"], ["literal", ["peak", "volcano"]]], ["step", ["zoom"], ["==", RANK, 1], 12, ["<=", RANK, 3], 14, true]],
-    ["match", ["get", "class"], "volcano", ["literal", ["Noto Sans Bold"]], ["literal", ["Noto Sans Regular"]]],
-    13,
-    undefined,
-    ["step", ["zoom"], NAME, 11, ["case", ["has", "ele"], ["concat", NAME, "\n", ["number-format", ["round", ["get", "ele"]], { locale: "en-US" }], " m"], NAME]],
-  );
+  map.addLayer({ id: "peak-dots", type: "circle", source: "openmaptiles", "source-layer": "mountain_peak", minzoom: 9, filter: PEAKS, paint: { "circle-radius": 2.5, "circle-color": "#1c1c18", "circle-stroke-color": "#ffffff", "circle-stroke-width": 1 } }, firstPlace);
+  // el nombre debajo del punto; la altitud desde z11
+  label("peak-names", "mountain_peak", 9, PEAKS, ["match", ["get", "class"], "volcano", ["literal", ["Noto Sans Bold"]], ["literal", ["Noto Sans Regular"]]], 13, undefined, {
+    "text-field": ["step", ["zoom"], NAME, 11, ["case", ["has", "ele"], ["concat", NAME, "\n", ["number-format", ["round", ["get", "ele"]], { locale: "en-US" }], " m"], NAME]],
+    "text-anchor": "top",
+    "text-offset": [0, 0.4],
+  });
 }
 
 /** Foto satelital debajo de las etiquetas (vista híbrida); apaga el sombreado, que la oscurece. Llamar después de addHillshade. */
@@ -125,7 +159,8 @@ export function setTrack(map: maplibregl.Map, line: LineCoords) {
     return;
   }
   map.addSource("track", { type: "geojson", data });
-  const firstLabel = map.getStyle().layers?.find((l) => l.type === "symbol")?.id;
+  // encima de las altitudes de las curvas
+  const firstLabel = map.getStyle().layers?.find((l) => l.type === "symbol" && l.source !== "contours")?.id;
   const layout = { "line-cap": "round", "line-join": "round" } as const;
   map.addLayer({ id: "track-casing", type: "line", source: "track", layout, paint: { "line-color": "#a53c00", "line-width": ["interpolate", ["linear"], ["zoom"], 10, 4, 15, 8] } }, firstLabel);
   map.addLayer({ id: "track-line", type: "line", source: "track", layout, paint: { "line-color": "#ff7a3d", "line-width": ["interpolate", ["linear"], ["zoom"], 10, 2, 15, 5] } }, firstLabel);
