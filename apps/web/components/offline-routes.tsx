@@ -138,7 +138,9 @@ function Viewer({ slug }: { slug: string }) {
   const [back, setBack] = useState(false);
   const [progress, setProgress] = useState<(ReturnType<typeof trackProgress> & { accuracy: number }) | null>(null);
   const gps = useRef<{ lngLat: [number, number]; accuracy: number } | null>(null);
-  const reversed = useMemo(() => route?.profile && reverseProfile(route.profile), [route]);
+  // con menos de 2 puntos no hay perfil que recorrer
+  const routeProfile = route?.profile && route.profile.length >= 2 ? route.profile : null;
+  const reversed = useMemo(() => routeProfile && reverseProfile(routeProfile), [routeProfile]);
 
   useEffect(() => {
     (offlineSupported() ? getOfflineRoute(slug) : Promise.resolve(null)).then(setRoute);
@@ -156,11 +158,11 @@ function Viewer({ slug }: { slug: string }) {
     );
   }
 
-  const profile = back ? reversed : route.profile;
+  const profile = back ? reversed : routeProfile;
   const point = active !== null && profile ? profile[active] : null;
   // `last` va en null al cambiar de modo: el índice recordado era del otro perfil
   function locate(fix: { lngLat: [number, number]; accuracy: number }, inReverse: boolean, last: number | null) {
-    const p = inReverse ? reversed : route?.profile;
+    const p = inReverse ? reversed : routeProfile;
     return p ? { ...trackProgress(p, { lng: fix.lngLat[0], lat: fix.lngLat[1] }, last), accuracy: fix.accuracy } : null;
   }
   const offM = progress && progress.offM > 50 && progress.offM > progress.accuracy ? progress.offM : null;
@@ -210,7 +212,7 @@ function Viewer({ slug }: { slug: string }) {
           <Rotate3d className="size-4" aria-hidden />
           3D
         </button>
-        {route.profile && !routeCloses(route.line) && (
+        {routeProfile && !routeCloses(route.line) && (
           <div className="basis-full">
             <div className="pointer-events-auto inline-flex rounded-full bg-surface-container-lowest/95 p-1 shadow-lg ring-1 ring-outline-variant/60">
               {[false, true].map((mode) => (
