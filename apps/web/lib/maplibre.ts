@@ -25,6 +25,53 @@ export function addHillshade(map: maplibregl.Map) {
   );
 }
 
+const NAME: maplibregl.ExpressionSpecification = ["coalesce", ["get", "name:es"], ["get", "name"]];
+const RANK: maplibregl.ExpressionSpecification = ["coalesce", ["get", "rank"], 99];
+const HIKING_POIS = ["alpine_hut", "wilderness_hut", "shelter", "viewpoint", "camp_site", "picnic_site", "attraction", "waterfall", "cave_entrance", "spring"];
+
+/** Nombres de cerros, pasos, refugios y áreas protegidas que ya vienen en las teselas. Llamar después de addHillshade. */
+export function addPlaceNames(map: maplibregl.Map) {
+  // debajo de pueblos y ciudades: en la colisión ganan ellos
+  const firstPlace = map.getStyle().layers?.find((l) => "source-layer" in l && l["source-layer"] === "place")?.id;
+  const label = (
+    id: string,
+    sourceLayer: string,
+    minzoom: number,
+    filter: maplibregl.ExpressionSpecification,
+    font: maplibregl.DataDrivenPropertyValueSpecification<string[]>,
+    size: number,
+    color = "#1c1c18",
+    field: maplibregl.ExpressionSpecification = NAME,
+  ) =>
+    map.addLayer(
+      {
+        id,
+        type: "symbol",
+        source: "openmaptiles",
+        "source-layer": sourceLayer,
+        minzoom,
+        filter: ["all", ["has", "name"], filter],
+        layout: { "text-field": field, "text-font": font, "text-size": size, "symbol-sort-key": RANK, "text-max-width": 8 },
+        paint: { "text-color": color, "text-halo-color": "#ffffff", "text-halo-width": 1.5 },
+      },
+      firstPlace,
+    );
+  label("park-names", "park", 9, ["all", ["==", ["geometry-type"], "Point"], ["in", ["get", "class"], ["literal", ["national_park", "nature_reserve"]]]], ["Noto Sans Italic"], 12, "#2f5d3a");
+  label("poi-names", "poi", 13, ["in", ["get", "subclass"], ["literal", HIKING_POIS]], ["Noto Sans Regular"], 11);
+  label("saddle-names", "mountain_peak", 12, ["==", ["get", "class"], "saddle"], ["Noto Sans Italic"], 11);
+  // hasta z11 solo el principal de cada zona, hasta z13 los tres primeros; la altitud desde z11
+  label(
+    "peak-names",
+    "mountain_peak",
+    9,
+    ["all", ["in", ["get", "class"], ["literal", ["peak", "volcano"]]], ["step", ["zoom"], ["==", RANK, 1], 12, ["<=", RANK, 3], 14, true]],
+    ["match", ["get", "class"], "volcano", ["literal", ["Noto Sans Bold"]], ["literal", ["Noto Sans Regular"]]],
+    13,
+    undefined,
+    ["step", ["zoom"], NAME, 11, ["case", ["has", "ele"], ["concat", NAME, "\n", ["number-format", ["round", ["get", "ele"]], { locale: "en-US" }], " m"], NAME]],
+  );
+}
+
 /** Foto satelital debajo de las etiquetas (vista híbrida); apaga el sombreado, que la oscurece. Llamar después de addHillshade. */
 export function setSatellite(map: maplibregl.Map, visible: boolean) {
   if (!map.getSource("satellite")) {
