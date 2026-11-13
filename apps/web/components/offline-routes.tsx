@@ -1,15 +1,16 @@
 "use client";
 /* eslint-disable @next/next/no-html-link-for-pages -- sin red solo sirve la navegación completa (la maneja el service worker) */
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import clsx from "clsx";
-import { ArrowLeft, CloudDownload, Mountain, Rotate3d, Smartphone, Trash2, TrendingUp, WifiOff } from "lucide-react";
+import { ArrowLeft, ArrowUp, Clock, CloudDownload, Mountain, Rotate3d, Smartphone, Trash2, TrendingDown, TrendingUp, TriangleAlert, Undo2, WifiOff } from "lucide-react";
 import { ElevationProfile } from "@/components/elevation-profile";
 // sin next/dynamic: así sus scripts vienen en el HTML que guarda el service worker y el mapa abre sin red
-import { TrackMap } from "@/components/track-map";
+import { routeCloses, TrackMap } from "@/components/track-map";
 import { deleteOfflineRoute, formatMb, getOfflineRoute, listOfflineRoutes, offlineSupported, useIosSafariTab, type OfflineRoute } from "@/lib/offline";
 import { DIFFICULTY, formatDuration, formatKm } from "@/lib/routes";
+import { reverseProfile, trackProgress } from "@/lib/track-progress";
 
 /** Lista de rutas guardadas en el dispositivo o, con `?ruta=`, el visor de una. Los enlaces son <a>: sin red solo hay HTML del service worker. */
 export function OfflineRoutes() {
@@ -134,6 +135,10 @@ function Viewer({ slug }: { slug: string }) {
   const [route, setRoute] = useState<OfflineRoute | null | undefined>(undefined);
   const [terrain3d, setTerrain3d] = useState(true);
   const [active, setActive] = useState<number | null>(null);
+  const [back, setBack] = useState(false);
+  const [progress, setProgress] = useState<(ReturnType<typeof trackProgress> & { accuracy: number }) | null>(null);
+  const gps = useRef<{ lngLat: [number, number]; accuracy: number } | null>(null);
+  const reversed = useMemo(() => route?.profile && reverseProfile(route.profile), [route]);
 
   useEffect(() => {
     (offlineSupported() ? getOfflineRoute(slug) : Promise.resolve(null)).then(setRoute);
@@ -151,11 +156,28 @@ function Viewer({ slug }: { slug: string }) {
     );
   }
 
-  const point = active !== null && route.profile ? route.profile[active] : null;
+  const profile = back ? reversed : route.profile;
+  const point = active !== null && profile ? profile[active] : null;
+  // `last` va en null al cambiar de modo: el índice recordado era del otro perfil
+  function locate(fix: { lngLat: [number, number]; accuracy: number }, inReverse: boolean, last: number | null) {
+    const p = inReverse ? reversed : route?.profile;
+    return p ? { ...trackProgress(p, { lng: fix.lngLat[0], lat: fix.lngLat[1] }, last), accuracy: fix.accuracy } : null;
+  }
+  const offM = progress && progress.offM > 50 && progress.offM > progress.accuracy ? progress.offM : null;
   return (
     <div className="fixed inset-0 bg-[#e3e8e1]">
-      <TrackMap line={route.line} hover={point ? [point[2], point[3]] : null} offline terrain3d={terrain3d} />
-      <div className="pointer-events-none absolute inset-x-0 top-0 flex items-start gap-2 p-3 pt-[max(0.75rem,env(safe-area-inset-top))]">
+      <TrackMap
+        line={route.line}
+        hover={point ? [point[2], point[3]] : null}
+        offline
+        terrain3d={terrain3d}
+        reversed={back}
+        onPosition={(lngLat, accuracy) => {
+          gps.current = { lngLat, accuracy };
+          setProgress((prev) => locate(gps.current!, back, prev?.index ?? null));
+        }}
+      />
+      <div className="pointer-events-none absolute inset-x-0 top-0 flex flex-wrap items-start gap-2 p-3 pt-[max(0.75rem,env(safe-area-inset-top))]">
         <a
           href="/descargas"
           aria-label="Rutas sin conexión"
@@ -166,12 +188,14 @@ function Viewer({ slug }: { slug: string }) {
         <div className="pointer-events-auto min-w-0 flex-1 rounded-2xl bg-surface-container-lowest/95 px-3 py-2 shadow-lg ring-1 ring-outline-variant/60">
           <p className="truncate font-headline text-sm font-bold">{route.name}</p>
           <p className="flex gap-3 font-mono text-[11px] text-on-surface-variant">
+            {back && <span>Regreso</span>}
             <span>{formatKm(route.distance_km)}</span>
             <span className="flex items-center gap-0.5">
-              <TrendingUp className="size-3" aria-hidden />
+              {/* de regreso se baja lo que la ida sube */}
+              {back ? <TrendingDown className="size-3" aria-hidden /> : <TrendingUp className="size-3" aria-hidden />}
               {route.elevation_gain_m.toLocaleString("es-MX")} m
             </span>
-            <span>{formatDuration(route.duration_min)}</span>
+            {!back && <span>{formatDuration(route.duration_min)}</span>}
           </p>
         </div>
         <button
@@ -186,11 +210,70 @@ function Viewer({ slug }: { slug: string }) {
           <Rotate3d className="size-4" aria-hidden />
           3D
         </button>
+        {route.profile && !routeCloses(route.line) && (
+          <div className="basis-full">
+            <div className="pointer-events-auto inline-flex rounded-full bg-surface-container-lowest/95 p-1 shadow-lg ring-1 ring-outline-variant/60">
+              {[false, true].map((mode) => (
+                <button
+                  key={String(mode)}
+                  type="button"
+                  aria-pressed={back === mode}
+                  onClick={() => {
+                    if (back === mode) return;
+                    setBack(mode);
+                    setActive(null);
+                    setProgress(gps.current && locate(gps.current, mode, null));
+                  }}
+                  className={clsx(
+                    "flex items-center gap-1.5 rounded-full px-3.5 py-1.5 font-headline text-sm font-semibold",
+                    back === mode ? "bg-primary text-on-primary" : "text-on-surface-variant",
+                  )}
+                >
+                  {mode && <Undo2 className="size-4" aria-hidden />}
+                  {mode ? "De regreso" : "Ida"}
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+        {offM !== null && (
+          <div role="alert" className="pointer-events-auto flex basis-full items-center gap-3 rounded-2xl bg-secondary-fixed px-3 py-2 text-on-secondary-container shadow-lg ring-1 ring-secondary-container/40">
+            <TriangleAlert className="size-5 shrink-0 text-secondary" aria-hidden />
+            <div>
+              <p className="font-headline text-sm font-bold">Estás a {offM < 1000 ? `${Math.round(offM)} m` : formatKm(offM / 1000)} del sendero</p>
+              <p className="text-sm">Regresa hacia la línea naranja.</p>
+            </div>
+          </div>
+        )}
       </div>
-      {route.profile && (
+      {profile && (
         // a la izquierda de los controles del mapa (zoom, brújula, GPS)
         <div className="absolute bottom-3 left-3 right-14 mb-[env(safe-area-inset-bottom)] rounded-2xl bg-surface-container-lowest/95 p-3 shadow-lg ring-1 ring-outline-variant/60">
-          <ElevationProfile profile={route.profile} active={active} onActive={setActive} overlay />
+          {progress ? (
+            <>
+              <div className="grid grid-cols-3 divide-x divide-outline-variant/60 text-center">
+                {[
+                  [back ? "Regresado" : "Recorrido", formatKm(progress.doneKm), "text-on-surface"],
+                  ["Falta", formatKm(progress.leftKm), "text-secondary"],
+                  ["Por subir", `${Math.round(progress.climbM).toLocaleString("es-MX")} m`, "text-on-surface"],
+                ].map(([label, value, color], i) => (
+                  <div key={label}>
+                    <p className="font-mono text-[10px] tracking-wider text-on-surface-variant uppercase">{label}</p>
+                    <p className={clsx("flex items-center justify-center gap-0.5 font-headline text-lg font-bold", color)}>
+                      {i === 2 && <ArrowUp className="size-4" aria-hidden />}
+                      {value}
+                    </p>
+                  </div>
+                ))}
+              </div>
+              <p className="my-2 flex items-center justify-center gap-1 border-b border-outline-variant/60 pb-2 font-mono text-[11px] text-on-surface-variant">
+                <Clock className="size-3" aria-hidden />≈ {formatDuration(progress.minutes)} para {back ? "volver al inicio" : "llegar al final"}
+              </p>
+            </>
+          ) : (
+            <p className="mb-2 text-center font-mono text-[11px] text-on-surface-variant">Activa tu ubicación en el mapa para ver tu avance</p>
+          )}
+          <ElevationProfile profile={profile} active={active} onActive={setActive} overlay position={progress?.index ?? null} />
         </div>
       )}
     </div>
