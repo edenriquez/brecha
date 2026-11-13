@@ -4,7 +4,7 @@ import { useActionState, useState, useTransition } from "react";
 import { keepValues } from "@/lib/forms";
 import Link from "next/link";
 import clsx from "clsx";
-import { Send, Signpost, Trash2 } from "lucide-react";
+import { ChevronDown, Send, Trash2 } from "lucide-react";
 import { Avatar } from "@/components/avatar";
 import { ReportButton } from "@/components/report-button";
 import { deleteTrailReport, reportTrailConditions, type CommunityState } from "@/app/rutas/community-actions";
@@ -15,83 +15,85 @@ import { useIsAdmin, useSessionUser } from "@/lib/use-session-user";
 
 type Target = { id: string; slug: string };
 
-const BUTTON = "shrink-0 rounded-lg border border-outline-variant px-3 py-1.5 text-xs font-semibold hover:border-primary-container hover:text-primary";
+const CHIP = "flex items-center gap-1.5 rounded-full border border-outline-variant px-3 py-1.5 text-[13px] font-medium transition-colors hover:border-on-surface";
 
+/**
+ * Lo último que se sabe del sendero en una línea (los reportes se despliegan al tocarla) y, debajo, la pregunta
+ * "¿cómo estaba?": elegir un estado abre el reporte ya con esa respuesta; lo demás es opcional.
+ */
 export function TrailConditions({ route, reports }: { route: Target; reports: TrailReport[] }) {
   const user = useSessionUser();
   const admin = useIsAdmin(user);
-  const [open, setOpen] = useState(false);
+  // estado con el que se abrió el reporte
+  const [reporting, setReporting] = useState<TrailStatus | null>(null);
   const [thanks, setThanks] = useState(false);
-  const [latest, ...older] = reports;
-  const canDelete = (r: TrailReport) => admin || r.author.id === user?.id;
+  const [expanded, setExpanded] = useState(false);
+  const latest = reports[0];
 
   return (
-    <section className="space-y-4 rounded-2xl border border-outline-variant/70 bg-surface-container-lowest p-6 shadow-xs">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div>
-          <h2 className="flex items-center gap-2 font-headline text-lg font-bold">
-            <Signpost className="size-5 text-primary" aria-hidden />
-            Condiciones del sendero
-          </h2>
-          <p className="text-xs text-on-surface-variant">Lo que reportan quienes caminaron la ruta hace poco</p>
-        </div>
-        {!open &&
-          user !== undefined &&
-          (user ? (
-            <button
-              type="button"
-              onClick={() => {
-                setOpen(true);
-                setThanks(false);
-              }}
-              className={BUTTON}
-            >
-              Reportar condiciones
-            </button>
-          ) : (
-            <Link href={`/entrar?next=/rutas/${route.slug}`} className={BUTTON}>
-              Entra para reportar
-            </Link>
+    <section className="space-y-3">
+      <h2 className="font-headline text-lg font-bold">Condiciones del sendero</h2>
+      {latest ? (
+        <button type="button" aria-expanded={expanded} onClick={() => setExpanded(!expanded)} className="flex w-full flex-wrap items-center gap-x-2 gap-y-1 text-left text-[13px]">
+          <span className={clsx("rounded-full px-2.5 py-0.5 text-xs font-bold", TRAIL_STATUS[latest.status].badge)}>{TRAIL_STATUS[latest.status].label}</span>
+          <span className="text-on-surface-variant">visita de {daysAgoLabel(latest.visited_on)}</span>
+          <span className="ml-auto flex items-center gap-1 font-semibold">
+            {reports.length === 1 ? "Ver reporte" : `Ver ${reports.length} reportes`}
+            <ChevronDown className={clsx("size-4 transition-transform", expanded && "rotate-180")} aria-hidden />
+          </span>
+        </button>
+      ) : (
+        <p className="text-[13px] text-on-surface-variant">Nadie ha reportado en los últimos {RECENT_REPORT_DAYS} días.</p>
+      )}
+      {expanded && (
+        <ul className="divide-y divide-outline-variant/40">
+          {reports.map((r) => (
+            <li key={r.id} className="space-y-1.5 py-3 first:pt-0">
+              <p className="flex items-center gap-2 text-xs">
+                <span className={clsx("size-2 rounded-full", TRAIL_STATUS[r.status].dot)} />
+                <span className="font-semibold">{TRAIL_STATUS[r.status].label}</span>
+                <span className="text-on-surface-variant">· visita de {daysAgoLabel(r.visited_on)}</span>
+              </p>
+              <ReportBody report={r} slug={route.slug} canDelete={admin || r.author.id === user?.id} />
+            </li>
           ))}
-      </div>
+        </ul>
+      )}
 
-      {open && (
+      {reporting ? (
         <ReportForm
           route={route}
+          initial={reporting}
           onClose={(sent) => {
-            setOpen(false);
+            setReporting(null);
             setThanks(sent);
           }}
         />
-      )}
-      {thanks && <p className="rounded-xl bg-primary-fixed/50 px-4 py-2.5 text-xs font-semibold text-on-primary-fixed-variant">Gracias: tu reporte ya ayuda a quien va después.</p>}
-
-      {latest ? (
-        <>
-          <div className="space-y-2.5 rounded-xl border border-outline-variant/50 bg-surface-container-low p-4">
-            <div className="flex flex-wrap items-center gap-2">
-              <span className={clsx("rounded-full px-2.5 py-0.5 text-xs font-bold", TRAIL_STATUS[latest.status].badge)}>{TRAIL_STATUS[latest.status].label}</span>
-              <span className="text-xs text-on-surface-variant">Último reporte: visita de {daysAgoLabel(latest.visited_on)}</span>
-            </div>
-            <ReportBody report={latest} slug={route.slug} canDelete={canDelete(latest)} />
-          </div>
-          {older.length > 0 && (
-            <ul className="divide-y divide-outline-variant/40">
-              {older.map((r) => (
-                <li key={r.id} className="space-y-1.5 py-3 first:pt-0 last:pb-0">
-                  <p className="flex items-center gap-2 text-xs">
-                    <span className={clsx("size-2 rounded-full", TRAIL_STATUS[r.status].dot)} />
-                    <span className="font-semibold">{TRAIL_STATUS[r.status].label}</span>
-                    <span className="text-on-surface-variant">· visita de {daysAgoLabel(r.visited_on)}</span>
-                  </p>
-                  <ReportBody report={r} slug={route.slug} canDelete={canDelete(r)} />
-                </li>
-              ))}
-            </ul>
-          )}
-        </>
+      ) : thanks ? (
+        <p className="rounded-xl bg-primary-fixed/50 px-4 py-2.5 text-xs font-semibold text-on-primary-fixed-variant">Gracias: tu reporte ya ayuda a quien va después.</p>
       ) : (
-        !open && <p className="text-sm text-on-surface-variant">Nadie ha reportado en los últimos {RECENT_REPORT_DAYS} días. Si fuiste hace poco, cuéntanos cómo estaba.</p>
+        user !== undefined && (
+          <div className="flex flex-wrap items-center gap-2">
+            <p className="w-full text-[13px] text-on-surface-variant">¿Fuiste hace poco? Cuéntanos cómo estaba:</p>
+            {(Object.keys(TRAIL_STATUS) as TrailStatus[]).map((key) => {
+              const label = (
+                <>
+                  <span className={clsx("size-2 rounded-full", TRAIL_STATUS[key].dot)} />
+                  {TRAIL_STATUS[key].label}
+                </>
+              );
+              return user ? (
+                <button key={key} type="button" onClick={() => setReporting(key)} className={CHIP}>
+                  {label}
+                </button>
+              ) : (
+                <Link key={key} href={`/entrar?next=/rutas/${route.slug}`} className={CHIP}>
+                  {label}
+                </Link>
+              );
+            })}
+          </div>
+        )
       )}
     </section>
   );
@@ -138,9 +140,9 @@ function ReportBody({ report, slug, canDelete }: { report: TrailReport; slug: st
   );
 }
 
-function ReportForm({ route, onClose }: { route: Target; onClose: (sent: boolean) => void }) {
+function ReportForm({ route, initial, onClose }: { route: Target; initial: TrailStatus; onClose: (sent: boolean) => void }) {
   const today = todayInMexicoCity();
-  const [status, setStatus] = useState<TrailStatus | null>(null);
+  const [status, setStatus] = useState(initial);
   const [state, send, pending] = useActionState<CommunityState, FormData>(async (prev, form) => {
     const result = await reportTrailConditions(route, prev, form);
     if (result.done) onClose(true);

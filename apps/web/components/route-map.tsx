@@ -1,9 +1,9 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { Binoculars, Layers, Mountain, MountainSnow, Rotate3d, Route, Satellite, Sun, Tent, Waves, X } from "lucide-react";
+import { ArrowLeft, Binoculars, MountainSnow, Rotate3d, Route, Satellite, Sun, Tent, Users, Waves } from "lucide-react";
 import clsx from "clsx";
-import { RouteTourPanel } from "@/components/route-tour-panel";
+import { RouteMapPanel, type PanelView } from "@/components/route-map-panel";
 import type { ProfilePoint } from "@/lib/gpx";
 import { CANDIDATE_COLOR, FINDING_COLORS, FINDING_LABELS, STREAM_COLOR, WATERFALL_COLOR, setLidar, setWaterfalls } from "@/lib/lidar-layer";
 import {
@@ -21,7 +21,7 @@ import {
 } from "@/lib/maplibre";
 import type { Area } from "@/lib/route-filters";
 import { RouteTour, type TourState } from "@/lib/route-tour";
-import { DIFFICULTY, formatKm, type RouteSummary } from "@/lib/routes";
+import { DIFFICULTY, formatDuration, formatKm, outingsLabel, ROUTE_TYPE, type RouteSummary } from "@/lib/routes";
 import { SunShade, type ShadeStatus } from "@/lib/sun-shade";
 import { compassName, formatMinutes, mxDate, mxToday, sunPosition, sunTimes } from "@/lib/sun";
 import { CAMP_COLORS, ROAD_COLORS, ROAD_LABELS, VIEWPOINT_COLOR, VIEW_ZONE_COLORS, setCamps, setRoads, setViewpoints } from "@/lib/terrain-layers";
@@ -30,6 +30,7 @@ import { CAMP_COLORS, ROAD_COLORS, ROAD_LABELS, VIEWPOINT_COLOR, VIEW_ZONE_COLOR
 const OVERLAYS = { lidar: setLidar, waterfalls: setWaterfalls, viewpoints: setViewpoints, camps: setCamps, roads: setRoads };
 type Overlay = keyof typeof OVERLAYS;
 type Overlays = Record<Overlay, boolean>;
+const NO_PADDING = { top: 0, bottom: 0, left: 0, right: 0 };
 const NO_OVERLAYS: Overlays = { lidar: false, waterfalls: false, viewpoints: false, camps: false, roads: false };
 
 /** Prende o apaga las capas que cambiaron desde la última vez y encuadra la que se acaba de prender. */
@@ -66,6 +67,77 @@ function pillHtml(route: RouteSummary, selected: boolean) {
   return `<span class="size-2 rounded-full ${dot}"></span>${name.outerHTML}${outings}`;
 }
 
+// Medidas tomadas de la ficha de referencia (160 de ancho) y llevadas a 256 px, ×1.6: 216 px para la foto,
+// y en el bloque de datos el encabezado a 29 px del borde, el primer renglón a 74 y 22 px entre renglones
+const CARD_W = 256;
+const ICON = `class="size-3.5 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"`;
+// trazos de lucide: regla, pendiente, reloj y huellas
+const ICONS = {
+  distance: `<svg ${ICON}><path d="M21.3 15.3a2.4 2.4 0 0 1 0 3.4l-2.6 2.6a2.4 2.4 0 0 1-3.4 0L2.7 8.7a2.41 2.41 0 0 1 0-3.4l2.6-2.6a2.41 2.41 0 0 1 3.4 0Z"/><path d="m14.5 12.5 2-2"/><path d="m11.5 9.5 2-2"/><path d="m8.5 6.5 2-2"/><path d="m17.5 15.5 2-2"/></svg>`,
+  gain: `<svg ${ICON}><path d="M22 7 13.5 15.5l-5-5L2 17"/><path d="M16 7h6v6"/></svg>`,
+  duration: `<svg ${ICON}><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg>`,
+  walk: `<svg ${ICON}><path d="M4 16v-2.38C4 11.5 2.97 10.5 3 8c.03-2.72 1.49-6 4.5-6C9.37 2 10 3.8 10 5.5c0 3.11-2 5.66-2 8.68V16a2 2 0 1 1-4 0Z"/><path d="M20 20v-2.38c0-2.12 1.03-3.12 1-5.62-.03-2.72-1.49-6-4.5-6C14.63 6 14 7.8 14 9.5c0 3.11 2 5.66 2 8.68V20a2 2 0 1 0 4 0Z"/><path d="M16 17h4"/><path d="M4 13h4"/></svg>`,
+};
+// todo son <span>: la ficha vive dentro del <button> del pin
+const row = (icon: string, label: string, value: string) =>
+  `<span class="flex h-[22px] items-center gap-4">${icon}<span class="text-[11px] opacity-80">${label}</span><b class="ml-auto font-headline text-[13px] font-bold">${value}</b></span>`;
+
+/**
+ * Ficha de la ruta al pasar el cursor por su pin: arriba, vidrio esmerilado con la foto de fondo, translúcida y a
+ * todo lo ancho (nombre y dificultad encima); abajo, un bloque sólido con distancia, desnivel y duración.
+ * Vive dentro del botón del pin: pasar el cursor del pin a la ficha no la cierra, y un clic en ella (o en su botón
+ * de reproducir) elige la ruta igual que el pin. La foto se pide hasta la primera vez que se muestra (`data-src`).
+ */
+function hoverCard(route: RouteSummary) {
+  // el relleno vertical une la ficha con el pin: sin hueco, el cursor no la pierde al subir hacia ella;
+  // solo recibe el cursor mientras se ve, para que no tape el mapa alrededor de cada pin
+  const box = document.createElement("span");
+  box.className = "pointer-events-none absolute bottom-full left-1/2 block -translate-x-1/2 py-2 text-left opacity-0 transition-opacity duration-200 group-hover:pointer-events-auto group-hover:opacity-100";
+  box.style.width = `${CARD_W}px`;
+  const cover = route.cover_url
+    ? `<img alt="" data-src="/_next/image?url=${encodeURIComponent(route.cover_url)}&w=640&q=75" class="absolute inset-0 h-full w-full object-cover opacity-75" />`
+    : `<svg viewBox="0 0 24 24" class="absolute top-1/2 left-1/2 size-14 -translate-x-1/2 -translate-y-1/4 opacity-40" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m8 3 4 8 5-5 5 15H2L8 3z"/></svg>`;
+  const outings =
+    route.upcoming_outings > 0
+      ? `<span class="absolute top-[108px] right-4 flex items-center gap-1.5 text-[11px] font-medium [text-shadow:0_1px_2px_rgb(0_0_0/0.4)]"><i class="size-1.5 rounded-full bg-secondary-container"></i>${outingsLabel(route.upcoming_outings)}</span>`
+      : "";
+  box.innerHTML = `
+    <span data-card class="block origin-bottom scale-95 overflow-hidden bg-on-surface/25 text-white shadow-2xl ring-1 ring-white/40 backdrop-blur-xl transition-transform duration-200 group-hover:scale-100">
+      <span class="relative block h-[216px]">
+        ${cover}
+        <span class="absolute inset-0 bg-gradient-to-b from-black/50 via-black/5 to-black/25"></span>
+        <span data-name class="absolute inset-x-4 top-3.5 line-clamp-2 font-headline text-sm leading-[18px] font-semibold [text-shadow:0_1px_2px_rgb(0_0_0/0.4)]"></span>
+        <span class="absolute top-[82px] left-4 flex items-center gap-1.5 rounded-full bg-white/15 py-0.5 pr-2.5 pl-2 text-[11px] font-medium [text-shadow:0_1px_2px_rgb(0_0_0/0.4)]"><i class="size-2 rounded-full ${DIFFICULTY[route.difficulty].dot} ring-1 ring-white/70"></i>${DIFFICULTY[route.difficulty].label}</span>
+        ${outings}
+      </span>
+      <span class="relative block h-[139px] bg-primary pt-[21px] pr-7 pl-5 font-body text-on-primary">
+        <span class="absolute -top-5 left-1/2 grid size-10 -translate-x-1/2 place-items-center rounded-full bg-primary ring-[3px] ring-white/80 transition-transform hover:scale-110" title="Recorrer en 3D"><svg viewBox="0 0 24 24" class="ml-0.5 size-4" fill="currentColor" aria-hidden="true"><path d="M7 4.5v15l12-7.5z"/></svg></span>
+        <span class="mb-[26px] flex h-4 items-center gap-1.5 text-[11px] font-medium opacity-90">${ICONS.walk}${ROUTE_TYPE[route.route_type]}</span>
+        ${row(ICONS.distance, "Distancia", formatKm(route.distance_km))}
+        ${row(ICONS.gain, "Desnivel", `↑ ${route.elevation_gain_m.toLocaleString("es-MX")} m`)}
+        ${row(ICONS.duration, "Duración", formatDuration(route.duration_min))}
+      </span>
+    </span>`;
+  // el nombre lo escribe quien sube la ruta: va como texto, no como HTML
+  box.querySelector("[data-name]")!.textContent = route.name;
+  return box;
+}
+
+/** Coloca la ficha donde quepa: arriba del pin o, si no hay lugar, abajo; y la recorre para que no se salga por los lados. */
+function placeCard(card: HTMLElement, pin: HTMLElement, box: HTMLElement) {
+  const img = card.querySelector<HTMLImageElement>("img[data-src]");
+  if (img && !img.src) img.src = img.dataset.src!;
+  const p = pin.getBoundingClientRect();
+  const b = box.getBoundingClientRect();
+  const below = p.top - b.top < card.offsetHeight + 8 && b.bottom - p.bottom > p.top - b.top;
+  card.style.bottom = below ? "auto" : "";
+  card.style.top = below ? "100%" : "";
+  card.querySelector<HTMLElement>("[data-card]")!.style.transformOrigin = below ? "top" : "";
+  const center = p.left + p.width / 2;
+  const shift = Math.max(b.left + 8 - (center - CARD_W / 2), 0) + Math.min(b.right - 8 - (center + CARD_W / 2), 0);
+  card.style.marginLeft = `${shift}px`;
+}
+
 function paintPill(el: HTMLElement, route: RouteSummary, selected: boolean) {
   el.className = `${PILL} ${selected ? PILL_SELECTED : PILL_IDLE}`;
   el.innerHTML = pillHtml(route, selected);
@@ -91,6 +163,12 @@ function viewArea(map: maplibregl.Map): Area {
   return [b.getWest(), b.getSouth(), b.getEast(), b.getNorth()];
 }
 
+/**
+ * `mode`: el selector Rutas / Salidas que va sobre el mapa; el estado es del explorador (el buscador vive en el encabezado).
+ * Con una ruta elegida el mapa es solo de ella y, si tiene perfil, se ve en 3D con su recorrido andando: se esconden
+ * los demás pines, el buscador y el selector, y quedan `onBack` (volver a la vista inicial, plana) y un panel al pie
+ * con el recorrido, las capas y `onDownload` (ir a la página de la ruta). No hay botones de zoom: dedos o rueda. `onPeek`: el cursor entró a un pin; sirve para adelantar la carga del trazo.
+ */
 export function RouteMap({
   routes,
   selectedId,
@@ -100,8 +178,20 @@ export function RouteMap({
   area,
   me,
   onUserMove,
-  onTourChange,
+  mode,
+  onMode,
+  outingCount,
+  onBack,
+  onDownload,
+  onPeek,
 }: {
+  onPeek: (id: string) => void;
+  onBack: () => void;
+  onDownload: () => void;
+  mode: "rutas" | "salidas";
+  onMode: (mode: "rutas" | "salidas") => void;
+  /** Salidas próximas de la actividad, para la insignia del selector */
+  outingCount: number;
   routes: RouteSummary[];
   selectedId: string | null;
   onSelect: (id: string) => void;
@@ -109,8 +199,6 @@ export function RouteMap({
   track: LineCoords | null | undefined;
   /** Perfil de altitud de la ruta seleccionada; con él se puede recorrer en 3D */
   profile: ProfilePoint[] | null;
-  /** Al entrar y salir del recorrido en 3D */
-  onTourChange?: (touring: boolean) => void;
   /** Zona de "Buscar en esta zona": mientras exista, los pines no vuelven a encuadrarse */
   area: Area | null;
   /** Tu ubicación, si la diste con "Usar mi ubicación actual": se pinta como un punto azul */
@@ -130,12 +218,14 @@ export function RouteMap({
   const areaRef = useRef(area);
   const areaFramed = useRef(false);
   const onUserMoveRef = useRef(onUserMove);
-  const onTourChangeRef = useRef(onTourChange);
+  const onPeekRef = useRef(onPeek);
   const framedSelection = useRef<string | null>(null);
+  const hadSelection = useRef(false);
+  // el recorrido arranca solo: si la ruta llega elegida, espera a que el estilo del mapa cargue
+  const [styleReady, setStyleReady] = useState(false);
   const [overlays, setOverlays] = useState(NO_OVERLAYS);
   const overlaysRef = useRef(overlays);
   const appliedOverlays = useRef(NO_OVERLAYS);
-  const [layersOpen, setLayersOpen] = useState(false);
   const [sun, setSunOn] = useState(false);
   const [sunDay, setSunDay] = useState(mxToday);
   const [sunMinutes, setSunMinutes] = useState(initialSunMinutes);
@@ -145,11 +235,18 @@ export function RouteMap({
   const satelliteRef = useRef(satellite);
   const [terrain3d, setTerrain3dOn] = useState(false);
   const terrain3dRef = useRef(terrain3d);
+  // panel de la ruta elegida: perfil, capas o plegado; con cada ruta vuelve al perfil
+  const [panelView, setPanelView] = useState<PanelView>("perfil");
+  const [panelOwner, setPanelOwner] = useState(selectedId);
+  if (panelOwner !== selectedId) {
+    setPanelOwner(selectedId);
+    setPanelView("perfil");
+  }
   useEffect(() => {
     onSelectRef.current = onSelect;
     onUserMoveRef.current = onUserMove;
-    onTourChangeRef.current = onTourChange;
-  }, [onSelect, onUserMove, onTourChange]);
+    onPeekRef.current = onPeek;
+  }, [onSelect, onUserMove, onPeek]);
 
   useEffect(() => {
     if (!container.current) return;
@@ -160,7 +257,6 @@ export function RouteMap({
       zoom: 8,
       attributionControl: { compact: true },
     });
-    map.addControl(new maplibregl.NavigationControl({ showCompass: false }), "bottom-right");
     map.once("load", () => {
       addHillshade(map);
       addTopoLayers(map);
@@ -171,6 +267,7 @@ export function RouteMap({
       applyOverlays(map, overlaysRef.current, appliedOverlays, mapRef);
       collapseAttribution(map);
       styleLoaded.current = true;
+      setStyleReady(true);
     });
     map.on("error", (e: { error?: { message?: string } }) => console.error("maplibre:", e.error?.message ?? e));
     // en móvil el mapa vive oculto (0×0) mientras se ve la lista: se encuadra al mostrarse
@@ -192,6 +289,7 @@ export function RouteMap({
       map.remove();
       mapRef.current = null;
       styleLoaded.current = false;
+      setStyleReady(false);
       appliedOverlays.current = NO_OVERLAYS;
     };
   }, []);
@@ -214,8 +312,17 @@ export function RouteMap({
       button.setAttribute("aria-label", route.name);
       const el = document.createElement("span");
       paintPill(el, route, route.id === selectedRef.current);
-      button.append(el);
+      const card = hoverCard(route);
+      button.classList.add("group");
+      button.append(el, card);
       button.addEventListener("click", () => onSelectRef.current(route.id));
+      button.addEventListener("pointerenter", () => {
+        onPeekRef.current(route.id);
+        placeCard(card, button, map.getContainer());
+        // la ficha va sobre los demás pines y sobre los controles del mapa
+        button.style.zIndex = "30";
+      });
+      button.addEventListener("pointerleave", () => (button.style.zIndex = route.id === selectedRef.current ? "10" : ""));
       const marker = new maplibregl.Marker({ element: button, anchor: "bottom" }).setLngLat([route.lng, route.lat]).addTo(map);
       registry.set(route.id, { marker, el, route });
     });
@@ -267,12 +374,35 @@ export function RouteMap({
     registry.forEach(({ el, route, marker }, id) => {
       paintPill(el, route, id === selectedId);
       marker.getElement().style.zIndex = id === selectedId ? "10" : "";
+      // el pin elegido ya dice su nombre
+      (marker.getElement().lastElementChild as HTMLElement).hidden = id === selectedId;
     });
     if (styleLoaded.current) setTrack(map, track ?? []);
 
+    // con una ruta elegida solo se ve su pin
+    registry.forEach(({ marker }, id) => (marker.getElement().style.display = !selectedId || id === selectedId ? "" : "none"));
+    // al soltarla, de vuelta a la vista inicial (la zona buscada o todos los pines), sin importar a dónde se movió el mapa
+    const released = !selectedId && hadSelection.current;
+    hadSelection.current = !!selectedId;
+    if (released) {
+      framedSelection.current = null;
+      // las capas abiertas recorren el centro del mapa: la vista inicial va sin ese relleno
+      map.setPadding(NO_PADDING);
+      const view = { pitch: terrain3dRef.current ? TERRAIN_3D_PITCH : 0, bearing: 0, duration: 600 };
+      if (areaRef.current) {
+        const [west, south, east, north] = areaRef.current;
+        frame(map, { bounds: [[west, south], [east, north]], options: { padding: 0, ...view } }, pendingFrame);
+      } else if (registry.size) {
+        const bounds = new maplibregl.LngLatBounds();
+        registry.forEach(({ route }) => bounds.extend([route.lng, route.lat]));
+        frame(map, { bounds, options: { padding: 80, maxZoom: 11, ...view } }, pendingFrame);
+      }
+    }
     const key = `${selectedId}:${track === undefined ? "cargando" : track ? "trazo" : "pin"}`;
     if (!selectedId || track === undefined || key === framedSelection.current) return;
     framedSelection.current = key;
+    // con perfil la cámara es del recorrido en 3D, que arranca de inmediato: encuadrar antes el trazo lo retrasa
+    if (profile) return;
     if (!terrain3dRef.current && (map.getPitch() || map.getBearing())) map.jumpTo({ pitch: 0, bearing: 0 });
     // con el mapa oculto (móvil, vista de lista) frame() lo deja pendiente hasta que se muestre
     if (track) {
@@ -283,7 +413,7 @@ export function RouteMap({
       if (!map.getContainer().clientWidth) frame(map, { bounds: [pin, pin], options: { maxZoom: 12, duration: 0 } }, pendingFrame);
       else if (!map.getBounds().contains(pin)) map.easeTo({ center: pin, duration: 600 });
     }
-  }, [selectedId, track]);
+  }, [selectedId, track, profile]);
 
   useEffect(() => {
     satelliteRef.current = satellite;
@@ -298,17 +428,6 @@ export function RouteMap({
     map.easeTo(terrain3d ? { pitch: TERRAIN_3D_PITCH, duration: 1000 } : { pitch: 0, bearing: 0, duration: 700 });
   }, [terrain3d]);
 
-  // en 3D la brújula vuelve al norte y, arrastrándola, gira e inclina la vista
-  useEffect(() => {
-    const map = mapRef.current;
-    if (!terrain3d || !map) return;
-    const compass = new maplibregl.NavigationControl({ showZoom: false });
-    map.addControl(compass, "bottom-right");
-    return () => {
-      if (mapRef.current) map.removeControl(compass);
-    };
-  }, [terrain3d]);
-
   useEffect(() => {
     overlaysRef.current = overlays;
     const map = mapRef.current;
@@ -316,11 +435,11 @@ export function RouteMap({
   }, [overlays]);
 
   useEffect(() => {
-    if (!layersOpen) return;
-    const close = (e: KeyboardEvent) => e.key === "Escape" && setLayersOpen(false);
+    if (panelView !== "capas") return;
+    const close = (e: KeyboardEvent) => e.key === "Escape" && setPanelView("perfil");
     window.addEventListener("keydown", close);
     return () => window.removeEventListener("keydown", close);
-  }, [layersOpen]);
+  }, [panelView]);
 
   // la capa de sombras se crea al prenderla por primera vez y vive lo que viva el mapa
   useEffect(() => {
@@ -342,15 +461,10 @@ export function RouteMap({
     [],
   );
 
-  // el recorrido es de la ruta elegida: al elegir otra se termina (ajuste durante el render, sin efecto)
-  const [tourFor, setTourFor] = useState<string | null>(null);
+  // con perfil, la ruta elegida se ve siempre en 3D con su recorrido, que arranca solo; plegar el panel
+  // no sale del 3D: solo "volver" (soltar la ruta) regresa al mapa plano
   const [tourState, setTourState] = useState<TourState | null>(null);
-  const [tourOwner, setTourOwner] = useState(selectedId);
-  if (tourOwner !== selectedId) {
-    setTourOwner(selectedId);
-    setTourFor(null);
-  }
-  const touring = tourFor !== null && tourFor === selectedId && !!profile;
+  const touring = !!selectedId && !!profile && styleReady;
   const tourRef = useRef<RouteTour | null>(null);
 
   useEffect(() => {
@@ -361,25 +475,45 @@ export function RouteMap({
     const tour = new RouteTour(map, profile, setTourState);
     tourRef.current = tour;
     tour.start();
-    onTourChangeRef.current?.(true);
-    const owner = selectedRef.current;
 
     return () => {
       tourRef.current = null;
-      onTourChangeRef.current?.(false);
       // al desmontar, el mapa ya se quitó
       if (!mapRef.current) return tour.pause();
       tour.destroy();
       registry.forEach(({ marker }) => (marker.getElement().style.visibility = ""));
+      // la cámara la regresa el efecto de la selección al soltar la ruta
       if (terrain3dRef.current) setTerrain3d(map, true);
-      map.easeTo({ pitch: terrain3dRef.current ? TERRAIN_3D_PITCH : 0, bearing: 0, duration: 700 });
-      map.once("moveend", () => {
-        const line = trackRef.current;
-        if (line && selectedRef.current === owner) map.fitBounds(lineBounds(line), { ...TRACK_FRAME, duration: 700 });
-      });
     };
   }, [touring, profile]);
 
+  const selected = routes.find((r) => r.id === selectedId);
+
+  // con las capas abiertas el panel tapa media pantalla: el centro del mapa (quien camina) se recorre al centro de lo
+  // que sí se ve y el recorrido se pausa; al cerrarlas vuelve a su lugar y sigue si iba andando
+  const panelBox = useRef<HTMLDivElement>(null);
+  const layersOpen = !!selectedId && panelView === "capas";
+  useEffect(() => {
+    const map = mapRef.current;
+    const box = panelBox.current;
+    if (!layersOpen || !map || !box) return;
+    const resume = !!tourRef.current?.isPlaying;
+    tourRef.current?.pause();
+    // animado en pausa; si el recorrido anda (lo reanudaron con las capas abiertas) sus cuadros cortarían la animación
+    const pad = (padding: typeof NO_PADDING) => (tourRef.current?.isPlaying ? map.setPadding(padding) : map.easeTo({ padding, duration: 300 }));
+    // 40: lo que el panel se separa del borde inferior
+    const fit = () => pad({ ...NO_PADDING, bottom: box.offsetHeight + 40 });
+    fit();
+    // prender una capa despliega su leyenda y el panel crece
+    const observer = new ResizeObserver(fit);
+    observer.observe(box);
+    return () => {
+      observer.disconnect();
+      if (!mapRef.current) return;
+      pad(NO_PADDING);
+      if (resume) map.once("moveend", () => tourRef.current?.play());
+    };
+  }, [layersOpen]);
   const toggleOverlay = (id: Overlay) => setOverlays((current) => ({ ...current, [id]: !current[id] }));
   const activeLayers = [satellite, sun, ...Object.values(overlays)].filter(Boolean).length;
 
@@ -387,32 +521,49 @@ export function RouteMap({
   return (
     <div className="absolute inset-0">
       <div ref={container} className="h-full w-full" />
-      {!touring && (
-        // abajo de "Buscar en esta zona", que va centrado arriba y en mapas angostos lo taparía
-        <div className="pointer-events-none absolute top-16 bottom-4 left-4 z-10 flex flex-col items-start gap-2 xl:top-4">
-          <button
-            type="button"
-            aria-expanded={layersOpen}
-            aria-controls="map-layers"
-            onClick={() => setLayersOpen((open) => !open)}
-            className={clsx(
-              "pointer-events-auto flex items-center gap-2 rounded-full px-4 py-2 font-headline text-sm font-semibold shadow-lg ring-1 transition-transform hover:scale-105 active:scale-95",
-              layersOpen ? "bg-on-surface text-surface ring-on-surface" : "bg-surface-container-lowest text-on-surface ring-outline-variant/60",
-            )}
-          >
-            {layersOpen ? <X className="size-4" aria-hidden /> : <Layers className="size-4" aria-hidden />}
-            Capas
-            {activeLayers > 0 && (
-              <span className="grid size-5 place-items-center rounded-full bg-primary text-[11px] text-on-primary" aria-label={`${activeLayers} activas`}>
-                {activeLayers}
-              </span>
-            )}
-          </button>
-          {layersOpen && (
-            <div
-              id="map-layers"
-              className="pointer-events-auto min-h-0 w-72 max-w-[calc(100vw-2rem)] space-y-0.5 overflow-y-auto overscroll-contain rounded-2xl bg-surface-container-lowest/95 p-1.5 shadow-lg ring-1 ring-outline-variant/50"
+      {!selectedId && (
+        <div className="pointer-events-none absolute inset-x-0 top-3 z-20 flex flex-col items-center gap-3 *:pointer-events-auto">
+          <div role="group" aria-label="Qué ver en el mapa" className="flex h-10 w-64 max-w-[calc(100%-40px)] items-center gap-0.5 rounded-full bg-surface-container-lowest p-1 font-headline text-[13px] font-semibold shadow-lg ring-1 ring-outline-variant/60">
+            <button type="button" aria-pressed={mode === "rutas"} onClick={() => onMode("rutas")} className={clsx("h-full flex-1 rounded-full px-3.5 transition-colors", mode === "rutas" ? "bg-on-surface text-surface" : "text-on-surface-variant")}>
+              Rutas
+            </button>
+            <button
+              type="button"
+              aria-pressed={mode === "salidas"}
+              onClick={() => onMode("salidas")}
+              className={clsx("flex h-full flex-1 items-center justify-center gap-1.5 rounded-full pr-3.5 pl-3 whitespace-nowrap transition-colors", mode === "salidas" ? "bg-on-surface text-surface" : "text-on-surface-variant")}
             >
+              <Users className="size-3.5" aria-hidden /> Salidas
+              {outingCount > 0 && (
+                <span className={clsx("grid h-[18px] min-w-[18px] place-items-center rounded-full px-1 text-[11px] font-bold", mode === "salidas" ? "bg-surface text-on-surface" : "bg-secondary text-on-secondary")}>
+                  {outingCount}
+                </span>
+              )}
+            </button>
+          </div>
+        </div>
+      )}
+      {selected && (
+        <>
+          {/* lo único fuera del panel: volver al mapa de todas las rutas */}
+          <button type="button" onClick={onBack} aria-label="Volver al mapa de rutas" className="absolute top-4 left-4 z-10 grid size-10 place-items-center rounded-full bg-surface-container-lowest shadow-lg ring-1 ring-outline-variant/60 transition-transform hover:scale-105 active:scale-95">
+            <ArrowLeft className="size-5" aria-hidden />
+          </button>
+          {/* arriba del botón de atribución del mapa */}
+          <div ref={panelBox} className="absolute inset-x-3 bottom-10 z-10 lg:inset-x-4">
+            <RouteMapPanel
+              name={selected.name}
+              summary={`${formatKm(selected.distance_km)} · ↑ ${selected.elevation_gain_m.toLocaleString("es-MX")} m`}
+              profile={profile}
+              tour={touring ? tourState : null}
+              onToggle={() => (tourState?.playing ? tourRef.current?.pause() : tourRef.current?.play())}
+              onSeek={(index) => tourRef.current?.seek(index)}
+              view={panelView}
+              onView={setPanelView}
+              activeLayers={activeLayers}
+              onDownload={onDownload}
+              layers={
+                <>
               <LayerRow
                 on={satellite}
                 onToggle={() => {
@@ -423,8 +574,10 @@ export function RouteMap({
                 title="Satélite"
                 hint="Imagen aérea de fondo"
               >
+                {/* con el recorrido la ruta ya se ve en 3D */}
                 <button
                   type="button"
+                  hidden={touring}
                   aria-pressed={terrain3d}
                   onClick={() => setTerrain3dOn((on) => !on)}
                   className={clsx(
@@ -454,29 +607,11 @@ export function RouteMap({
               <LayerRow on={overlays.roads} onToggle={() => toggleOverlay("roads")} icon={<Route className="size-4" aria-hidden />} title="Brechas" hint="Caminos de tierra y su pendiente">
                 <RoadLegend />
               </LayerRow>
-            </div>
-          )}
-        </div>
-      )}
-      {profile && selectedId && !touring && (
-        <button
-          type="button"
-          onClick={() => setTourFor(selectedId)}
-          className="absolute top-4 right-4 z-10 flex items-center gap-2 rounded-full bg-on-surface px-4 py-2 font-headline text-sm font-semibold text-surface shadow-lg transition-transform hover:scale-105 active:scale-95"
-        >
-          <Mountain className="size-4" aria-hidden />
-          Recorrer en 3D
-        </button>
-      )}
-      {touring && tourState && (
-        <RouteTourPanel
-          name={routes.find((r) => r.id === selectedId)?.name ?? ""}
-          profile={profile}
-          state={tourState}
-          onToggle={() => (tourState.playing ? tourRef.current?.pause() : tourRef.current?.play())}
-          onSeek={(index) => tourRef.current?.seek(index)}
-          onClose={() => setTourFor(null)}
-        />
+                </>
+              }
+            />
+          </div>
+        </>
       )}
     </div>
   );

@@ -70,14 +70,34 @@ export function routeHaystack(route: RouteSummary) {
   return [route.name, route.place_label, ...route.tags];
 }
 
+/** Qué hay en la ruta. Sale de las etiquetas y del nombre: muchas rutas subidas llegan sin etiquetas. */
+export const CATEGORIES = [
+  { id: "cascadas", emoji: "💦", label: "Cascadas", words: ["cascada", "salto"] },
+  { id: "montanas", emoji: "⛰️", label: "Montañas", words: ["cumbre", "montana", "pico", "nevado", "cerro", "volcan"] },
+  { id: "bosques", emoji: "🌲", label: "Bosques", words: ["bosque"] },
+  { id: "miradores", emoji: "🔭", label: "Miradores", words: ["mirador"] },
+  { id: "agua", emoji: "🏞️", label: "Ríos y lagunas", words: ["rio", "laguna", "lago"] },
+  { id: "arqueologia", emoji: "🏛️", label: "Arqueología", words: ["arqueologia", "piramide"] },
+] as const;
+export const CATEGORY_KEY = "categoria";
+
+/** Por palabra completa (o su plural): "rio" no debe encontrar "territorio". */
+export function matchesCategory(route: RouteSummary, id: string | null) {
+  const category = CATEGORIES.find((c) => c.id === id);
+  if (!category) return true;
+  const tokens = normalize([route.name, ...route.tags].join(" ")).split(/[^a-z0-9]+/);
+  return category.words.some((w) => tokens.some((t) => t === w || t === `${w}s` || t === `${w}es`));
+}
+
 function inRange(value: number, range: Range) {
   return (range.min === undefined || value > range.min) && (range.max === undefined || value <= range.max);
 }
 
-/** Todo menos el texto: dificultad, rangos y tipo de recorrido. */
+/** Todo menos el texto: categoría, dificultad, rangos y tipo de recorrido. */
 export function matchesFilters(route: RouteSummary, params: URLSearchParams) {
   const difficulty = params.get(DIFFICULTY_KEY);
   if (difficulty && difficulty in DIFFICULTY && route.difficulty !== (difficulty as Difficulty)) return false;
+  if (!matchesCategory(route, params.get(CATEGORY_KEY))) return false;
   const type = params.get(TYPE_KEY);
   if (type && type in ROUTE_TYPE && route.route_type !== type) return false;
   return RANGE_KEYS.every((key) => {

@@ -27,7 +27,8 @@ const TOUR_HILLSHADE = 0.75;
 const LOOK_AHEAD_KM = 0.3;
 // cuánto tarda la cámara en alcanzar el rumbo del sendero: más corto marea en las curvas cerradas
 const TURN_MS = 900;
-const INTRO_MS = 2200;
+// el recorrido arranca al elegir la ruta: el vuelo al inicio no debe hacerse esperar
+const INTRO_MS = 900;
 
 export type TourState = { index: number; km: number; ele: number; playing: boolean; done: boolean };
 
@@ -100,6 +101,10 @@ export class RouteTour {
     );
     this.marker.addTo(map);
     map.on("movestart", this.interrupt);
+  }
+
+  get isPlaying() {
+    return this.playing;
   }
 
   /** Vuela al inicio y arranca. */

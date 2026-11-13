@@ -94,7 +94,8 @@ export function UserMenu({ island = false }: { island?: boolean }) {
           aria-expanded={open}
           aria-controls={menuId}
           aria-label="Tu cuenta"
-          className="relative flex items-center gap-2 rounded-full py-0.5 pr-1 pl-0.5 hover:bg-surface-container sm:pr-2"
+          // en la isla (fondo oscuro) el fondo claro del hover se veía como un halo descentrado alrededor de la foto
+          className={island ? "relative block rounded-full transition-transform hover:scale-105 active:scale-95" : "relative flex items-center gap-2 rounded-full py-0.5 pr-1 pl-0.5 hover:bg-surface-container sm:pr-2"}
         >
           <Avatar person={person} size={36} className="border-0 ring-2 ring-primary-fixed" />
           {!island && (
@@ -106,7 +107,11 @@ export function UserMenu({ island = false }: { island?: boolean }) {
           {!!pending && pending.routes + pending.reports > 0 && <span className="absolute -top-0.5 left-7 size-2.5 rounded-full border-2 border-surface bg-secondary" aria-hidden />}
         </button>
         {open && (
-          <div id={menuId} className={`absolute right-0 z-50 w-60 ${island ? "bottom-full mb-2" : "mt-2"} rounded-xl border border-outline-variant/70 bg-surface-container-lowest p-1.5 text-on-surface shadow-lg`}>
+          <div
+            id={menuId}
+            // crece desde el botón: su esquina más cercana es el origen de la animación
+            className={`menu-pop absolute right-0 z-50 w-60 ${island ? "bottom-full mb-3 origin-bottom-right" : "mt-2 origin-top-right"} rounded-2xl bg-surface-container-lowest/95 p-1.5 text-on-surface shadow-2xl ring-1 ring-outline-variant/50 backdrop-blur-md`}
+          >
             <p className="truncate px-3 pt-1.5 pb-2 text-xs text-on-surface-variant">{user.email}</p>
             <nav aria-label="Tu cuenta" onClick={() => setOpen(false)}>
               <Link href={profileHref(user.id)} className={ITEM}>

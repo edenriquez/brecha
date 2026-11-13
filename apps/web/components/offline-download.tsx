@@ -15,9 +15,30 @@ type State =
   | { step: "guardada"; bytes: number }
   | { step: "error"; message: string };
 
-const BUTTON = "inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-semibold transition-colors";
+// es la acción principal de la página de la ruta: se llega a ella desde "Descargar mapa"
+const BUTTON = "relative inline-flex h-14 items-center gap-3 overflow-hidden rounded-2xl whitespace-nowrap";
+// verde en degradado con un filo de luz, sombra del mismo tono y un destello que cruza al pasar el cursor
+const PRIMARY = `group ${BUTTON} bg-gradient-to-br from-primary-container to-primary pr-6 pl-2.5 text-left text-on-primary shadow-[0_12px_28px_-12px_rgba(22,69,37,0.75)] ring-1 ring-white/15 transition-transform ring-inset hover:-translate-y-0.5 active:translate-y-0 active:scale-[0.98]`;
+const QUIET = `${BUTTON} border border-outline-variant px-4 font-headline text-sm font-semibold transition-colors hover:border-error hover:text-error`;
 
-/** Guarda satélite, relieve 3D y trazo de la zona de la ruta para abrirla sin señal. */
+/** El contenido del botón principal: icono en su recuadro, título y una línea de detalle. */
+function Label({ icon, title, detail }: { icon: React.ReactNode; title: string; detail: string }) {
+  return (
+    <>
+      <span className="grid size-9 shrink-0 place-items-center rounded-xl bg-white/15">{icon}</span>
+      <span className="min-w-0">
+        <span className="block font-headline text-[15px] leading-tight font-bold">{title}</span>
+        <span className="block truncate text-[11px] leading-tight text-on-primary/75">{detail}</span>
+      </span>
+      <span aria-hidden className="pointer-events-none absolute inset-y-0 -left-1/3 w-1/4 -skew-x-12 bg-white/25 blur-md transition-transform duration-700 group-hover:translate-x-[650%] motion-reduce:hidden" />
+    </>
+  );
+}
+
+/** Aviso que cuelga del botón: el error de la descarga o la advertencia de iPhone. */
+const NOTE = "absolute top-full left-0 z-20 mt-2 w-72 rounded-xl bg-surface-container-lowest p-3 text-xs shadow-lg ring-1 ring-outline-variant/60";
+
+/** Botón que guarda satélite, relieve 3D y trazo de la zona de la ruta para abrirla sin señal; el avance también se ve en la píldora de descargas. */
 export function OfflineDownload({ route, line, profile }: { route: OfflineRouteInfo; line: [number, number][]; profile: ProfilePoint[] | null }) {
   const [confirm, setConfirm] = useState(false);
   const [sheet, setSheet] = useState(false);
@@ -46,68 +67,44 @@ export function OfflineDownload({ route, line, profile }: { route: OfflineRouteI
     queueDownload(route, line, profile, choice);
   }
 
-  return (
-    <div className="space-y-3 rounded-xl border border-outline-variant/60 bg-surface-container-low/60 p-4">
-      <div className="flex flex-col justify-between gap-3 sm:flex-row sm:items-center">
-        <div className="flex items-start gap-3">
-          <div className="flex size-9 shrink-0 items-center justify-center rounded-full bg-primary-fixed/70 text-primary">
-            {state.step === "guardada" ? <CheckCircle2 className="size-5" aria-hidden /> : <CloudDownload className="size-5" aria-hidden />}
-          </div>
-          <div>
-            <h3 className="font-headline text-sm font-bold">{state.step === "guardada" ? "Disponible sin conexión" : "Úsala sin señal"}</h3>
-            <p className="text-xs text-on-surface-variant">
-              {state.step === "guardada"
-                ? `Satélite, relieve 3D y trazo guardados en este dispositivo · ${formatMb(state.bytes)}`
-                : `Guarda el satélite, el relieve 3D y el trazo de la zona para verla en el cerro con tu GPS · ≈ ${Math.max(1, Math.round(estimate.mb))} MB`}
-            </p>
-          </div>
-        </div>
-        <div className="flex shrink-0 gap-2 self-start sm:self-auto">
-          {(state.step === "inicio" || state.step === "error") && (
-            <button type="button" onClick={() => (state.step === "error" ? queueDownload(route, line, profile) : iosTab ? setConfirm(true) : openSheet())} className={`${BUTTON} bg-primary text-on-primary hover:bg-primary-container`}>
-              <CloudDownload className="size-4" aria-hidden />
-              {state.step === "error" ? "Reintentar" : "Guardar sin conexión"}
-            </button>
-          )}
-          {(state.step === "bajando" || state.step === "en-cola" || state.step === "en-pausa") && (
-            <button type="button" onClick={() => cancelDownload(route.slug)} className={`${BUTTON} border border-outline-variant hover:border-error hover:text-error`}>
-              <X className="size-4" aria-hidden />
-              Cancelar
-            </button>
-          )}
-          {state.step === "guardada" && (
-            <>
-              {/* <a> y no <Link>: la página de descargas se abre completa, igual que sin red */}
-              <a href={`/descargas?ruta=${encodeURIComponent(route.slug)}`} className={`${BUTTON} bg-primary text-on-primary hover:bg-primary-container`}>
-                Abrir sin conexión
-              </a>
-              <button type="button" onClick={() => deleteOfflineRoute(route.slug)} aria-label="Borrar del dispositivo" className={`${BUTTON} border border-outline-variant text-on-surface-variant hover:border-error hover:text-error`}>
-                <Trash2 className="size-4" aria-hidden />
-              </button>
-            </>
-          )}
-        </div>
-      </div>
+  const waiting = state.step === "bajando" ? `Descargando ${Math.floor((state.done / state.total) * 100)} %` : state.step === "en-cola" ? "En cola" : state.step === "en-pausa" ? "En pausa, sin conexión" : null;
+  const size = `≈ ${Math.max(1, Math.round(estimate.mb))} MB`;
 
-      {state.step === "bajando" && (
-        <div className="space-y-1">
-          <div className="h-1.5 overflow-hidden rounded-full bg-surface-container-high">
-            <div className="h-full rounded-full bg-primary transition-[width]" style={{ width: `${(state.done / state.total) * 100}%` }} />
-          </div>
-          <p className="font-mono text-[11px] text-on-surface-variant">
-            Descargando… {Math.floor((state.done / state.total) * 100)}% · no cierres esta página
-          </p>
-        </div>
+  return (
+    <div className="relative flex flex-1 gap-2 *:first:flex-1 sm:flex-none sm:*:first:flex-none">
+      {(state.step === "inicio" || state.step === "confirmar" || state.step === "error") && (
+        <button type="button" onClick={() => (state.step === "error" ? queueDownload(route, line, profile) : iosTab ? setConfirm(true) : openSheet())} className={PRIMARY}>
+          <Label
+            icon={<CloudDownload className="size-5" aria-hidden />}
+            title={state.step === "error" ? "Reintentar descarga" : "Usar sin señal"}
+            detail={`Satélite, relieve 3D y trazo · ${size}`}
+          />
+        </button>
+      )}
+      {waiting && (
+        <button type="button" onClick={() => cancelDownload(route.slug)} aria-label={`${waiting}. Cancelar`} className={QUIET}>
+          {/* el avance llena el botón */}
+          {state.step === "bajando" && <span aria-hidden className="absolute inset-y-0 left-0 bg-primary-fixed/60 transition-[width]" style={{ width: `${(state.done / state.total) * 100}%` }} />}
+          <span className="relative flex-1">{waiting}</span>
+          <X className="relative size-4" aria-hidden />
+        </button>
+      )}
+      {state.step === "guardada" && (
+        <>
+          {/* <a> y no <Link>: la página de descargas se abre completa, igual que sin red */}
+          <a href={`/descargas?ruta=${encodeURIComponent(route.slug)}`} className={PRIMARY}>
+            <Label icon={<CheckCircle2 className="size-5" aria-hidden />} title="Abrir sin señal" detail={`Guardada en este dispositivo · ${formatMb(state.bytes)}`} />
+          </a>
+          <button type="button" onClick={() => deleteOfflineRoute(route.slug)} aria-label="Borrar del dispositivo" className={`${QUIET} w-14 justify-center px-0 text-on-surface-variant`}>
+            <Trash2 className="size-4" aria-hidden />
+          </button>
+        </>
       )}
 
-      {state.step === "en-cola" && <p className="font-mono text-[11px] text-on-surface-variant">En cola · no cierres esta página</p>}
-
-      {state.step === "en-pausa" && <p className="font-mono text-[11px] text-secondary">Sin conexión · se reanuda sola</p>}
-
-      {state.step === "error" && <p className="text-xs font-medium text-error">{state.message}</p>}
+      {state.step === "error" && <p className={`${NOTE} font-medium text-error`}>{state.message}</p>}
 
       {state.step === "confirmar" && (
-        <div className="space-y-3 rounded-lg bg-secondary-fixed/40 p-3 text-xs text-on-surface">
+        <div className={`${NOTE} space-y-3`}>
           <p className="flex gap-2">
             <Smartphone className="size-4 shrink-0 text-secondary" aria-hidden />
             <span>
@@ -115,10 +112,10 @@ export function OfflineDownload({ route, line, profile }: { route: OfflineRouteI
             </span>
           </p>
           <div className="flex gap-2">
-            <button type="button" onClick={openSheet} className={`${BUTTON} border border-outline-variant bg-surface-container-lowest`}>
+            <button type="button" onClick={openSheet} className="rounded-lg border border-outline-variant px-3 py-1.5 font-semibold">
               Guardar aquí de todos modos
             </button>
-            <button type="button" onClick={() => setConfirm(false)} className={`${BUTTON} text-on-surface-variant`}>
+            <button type="button" onClick={() => setConfirm(false)} className="px-2 py-1.5 font-semibold text-on-surface-variant">
               Cancelar
             </button>
           </div>

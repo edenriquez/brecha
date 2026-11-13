@@ -112,10 +112,6 @@ export function outingsLabel(n: number) {
   return n === 1 ? "1 salida próxima" : `${n} salidas próximas`;
 }
 
-export function googleMapsDirections(lat: number, lng: number) {
-  return `https://www.google.com/maps/dir/?api=1&destination=${lat},${lng}`;
-}
-
 export function googleMapsSearch(query: string) {
   return `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(query)}`;
 }

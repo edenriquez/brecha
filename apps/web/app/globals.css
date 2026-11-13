@@ -65,3 +65,75 @@ body {
 .maplibregl-popup {
   z-index: 20;
 }
+
+/* Paso a la página de una ruta (components/mountain-loader.tsx): el fondo entra y la montaña se dibuja */
+@keyframes loader-in {
+  from {
+    opacity: 0;
+  }
+}
+@keyframes loader-draw {
+  from {
+    stroke-dashoffset: 1;
+  }
+  to {
+    stroke-dashoffset: 0;
+  }
+}
+@keyframes loader-rise {
+  from {
+    opacity: 0;
+    transform: translateY(10px) scale(0.96);
+  }
+}
+.loader-in {
+  animation: loader-in 160ms ease-out both;
+}
+.loader-rise {
+  animation: loader-rise 420ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+.loader-draw {
+  stroke-dasharray: 1;
+  animation: loader-draw 520ms cubic-bezier(0.65, 0, 0.35, 1) both;
+}
+.loader-draw-late {
+  animation-delay: 140ms;
+}
+@media (prefers-reduced-motion: reduce) {
+  .loader-in,
+  .loader-rise,
+  .loader-draw {
+    animation: none;
+  }
+}
+
+/* Menú del perfil (components/user-menu.tsx): sale del botón, creciendo desde su esquina, y sus renglones entran después */
+@keyframes menu-pop {
+  from {
+    opacity: 0;
+    transform: scale(0.35);
+    filter: blur(6px);
+  }
+  60% {
+    opacity: 1;
+    filter: none;
+  }
+}
+@keyframes menu-item {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+}
+.menu-pop {
+  animation: menu-pop 260ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+.menu-pop > * {
+  animation: menu-item 240ms cubic-bezier(0.22, 1, 0.36, 1) 90ms both;
+}
+@media (prefers-reduced-motion: reduce) {
+  .menu-pop,
+  .menu-pop > * {
+    animation: none;
+  }
+}
