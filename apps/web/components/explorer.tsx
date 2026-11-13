@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import type { LineString } from "geojson";
 import clsx from "clsx";
 import { Bike, CalendarDays, CarFront, CircleCheck, Footprints, List, Map as MapIcon, Navigation, Route, Search, X } from "lucide-react";
+import { Island, ISLAND_ACTION, islandHiddenAfter } from "@/components/island";
 import { MountainLoader } from "@/components/mountain-loader";
 import { OutingCard } from "@/components/outing-card";
 import type { Position } from "@/components/place-sheet";
@@ -13,7 +14,6 @@ import { RouteMap } from "@/components/route-map-lazy";
 import { RoutePanel } from "@/components/route-panel";
 import { SearchBox } from "@/components/search-box";
 import { TopNav } from "@/components/top-nav";
-import { UserMenu } from "@/components/user-menu";
 import {
   ACTIVITY_KEY,
   AREA_KEY,
@@ -230,11 +230,8 @@ export function Explorer({ routes: allRoutes, outings: allOutings }: { routes: R
           ref={pane}
           className={clsx("@container h-full w-full overflow-y-auto bg-surface px-3 py-4 sm:px-4 lg:block lg:w-auto lg:min-w-0 lg:flex-1", view === "mapa" && "hidden")}
           onScroll={(e) => {
-            const top = e.currentTarget.scrollTop;
-            // umbral de 12 px para que el temblor del dedo no la haga parpadear
-            if (top > 0 && Math.abs(top - lastScroll.current) < 12) return;
-            setIslandHidden(top > 0 && top > lastScroll.current);
-            lastScroll.current = top;
+            const hidden = islandHiddenAfter(e.currentTarget.scrollTop, lastScroll);
+            if (hidden !== null) setIslandHidden(hidden);
           }}
         >
           {selected && (
@@ -407,28 +404,19 @@ export function Explorer({ routes: allRoutes, outings: allOutings }: { routes: R
 
         {/* isla: con el menú del perfil abierto (aria-expanded) no se esconde. Con una ruta elegida el mapa es solo de ella: se vuelve con su botón de regreso */}
         {!(selected && view === "mapa") && (
-          <div
-            className={clsx(
-              "absolute bottom-5 left-1/2 z-20 flex -translate-x-1/2 items-center gap-1 rounded-full bg-on-surface p-1 shadow-lg transition-transform duration-300 motion-reduce:transition-none lg:hidden",
-              islandHidden && view === "lista" && "translate-y-[calc(100%+1.5rem)] has-[[aria-expanded=true]]:translate-y-0",
-            )}
-          >
+          <Island hidden={islandHidden && view === "lista"} className="lg:hidden">
             <button
               type="button"
               onClick={() => {
                 setView((v) => (v === "lista" ? "mapa" : "lista"));
                 setIslandHidden(false);
               }}
-              className="flex items-center gap-2 rounded-full px-4 py-2 font-headline text-sm font-semibold whitespace-nowrap text-surface active:scale-95"
+              className={ISLAND_ACTION}
             >
               {view === "lista" ? <MapIcon className="size-4" aria-hidden /> : <List className="size-4" aria-hidden />}
               {view === "lista" ? "Ver mapa" : "Ver lista"}
             </button>
-            {/* desde md el perfil ya está en el encabezado */}
-            <div className="md:hidden">
-              <UserMenu island />
-            </div>
-          </div>
+          </Island>
         )}
       </main>
       {leaving && <MountainLoader />}
