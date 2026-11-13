@@ -1,9 +1,13 @@
 "use client";
 
 import { useMemo, useState } from "react";
+import dynamic from "next/dynamic";
 import { CheckCircle2, CloudDownload, Smartphone, Trash2, X } from "lucide-react";
 import type { ProfilePoint } from "@/lib/gpx";
-import { cancelDownload, deleteOfflineRoute, estimateDownload, formatMb, queueDownload, useDownloads, useIosSafariTab, type OfflineRouteInfo } from "@/lib/offline";
+import { cancelDownload, deleteOfflineRoute, estimateDownload, formatMb, queueDownload, useDownloads, useIosSafariTab, type DownloadChoice, type OfflineRouteInfo } from "@/lib/offline";
+
+// trae maplibre: solo se baja al abrir la hoja
+const DownloadSheet = dynamic(() => import("./download-sheet").then((m) => m.DownloadSheet), { ssr: false });
 
 type State =
   | { step: "inicio" | "confirmar" | "en-cola" }
@@ -16,6 +20,7 @@ const BUTTON = "inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs 
 /** Guarda satélite, relieve 3D y trazo de la zona de la ruta para abrirla sin señal. */
 export function OfflineDownload({ route, line, profile }: { route: OfflineRouteInfo; line: [number, number][]; profile: ProfilePoint[] | null }) {
   const [confirm, setConfirm] = useState(false);
+  const [sheet, setSheet] = useState(false);
   const iosTab = useIosSafariTab();
   const estimate = useMemo(() => estimateDownload(line), [line]);
   // la descarga va por la cola compartida con /guardadas: nunca dos a la vez
@@ -30,9 +35,14 @@ export function OfflineDownload({ route, line, profile }: { route: OfflineRouteI
   else if (download?.status === "en-cola") state = { step: "en-cola" };
   else if (download?.error) state = { step: "error", message: download.error };
 
-  function start() {
+  function openSheet() {
     setConfirm(false);
-    queueDownload(route, line, profile);
+    setSheet(true);
+  }
+
+  function start(choice: DownloadChoice) {
+    setSheet(false);
+    queueDownload(route, line, profile, choice);
   }
 
   return (
@@ -53,7 +63,7 @@ export function OfflineDownload({ route, line, profile }: { route: OfflineRouteI
         </div>
         <div className="flex shrink-0 gap-2 self-start sm:self-auto">
           {(state.step === "inicio" || state.step === "error") && (
-            <button type="button" onClick={() => (iosTab ? setConfirm(true) : start())} className={`${BUTTON} bg-primary text-on-primary hover:bg-primary-container`}>
+            <button type="button" onClick={() => (state.step === "error" ? queueDownload(route, line, profile) : iosTab ? setConfirm(true) : openSheet())} className={`${BUTTON} bg-primary text-on-primary hover:bg-primary-container`}>
               <CloudDownload className="size-4" aria-hidden />
               {state.step === "error" ? "Reintentar" : "Guardar sin conexión"}
             </button>
@@ -102,7 +112,7 @@ export function OfflineDownload({ route, line, profile }: { route: OfflineRouteI
             </span>
           </p>
           <div className="flex gap-2">
-            <button type="button" onClick={start} className={`${BUTTON} border border-outline-variant bg-surface-container-lowest`}>
+            <button type="button" onClick={openSheet} className={`${BUTTON} border border-outline-variant bg-surface-container-lowest`}>
               Guardar aquí de todos modos
             </button>
             <button type="button" onClick={() => setConfirm(false)} className={`${BUTTON} text-on-surface-variant`}>
@@ -111,6 +121,8 @@ export function OfflineDownload({ route, line, profile }: { route: OfflineRouteI
           </div>
         </div>
       )}
+
+      {sheet && <DownloadSheet route={route} line={line} onDownload={start} onClose={() => setSheet(false)} />}
     </div>
   );
 }
