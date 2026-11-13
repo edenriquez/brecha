@@ -419,10 +419,13 @@ function Viewer({ slug }: { slug: string }) {
           <a href="/descargas" aria-label="Rutas sin conexión" className={clsx(ROUND, "shrink-0 bg-surface-container-lowest")}>
             <ArrowLeft className="size-5" aria-hidden />
           </a>
-          <p className="pointer-events-auto flex min-w-0 items-center gap-2 rounded-full bg-surface-container-lowest px-4 py-3 font-headline text-sm font-bold shadow-lg ring-1 ring-outline-variant/60">
-            <Mountain className="size-4 shrink-0 text-primary" aria-hidden />
-            <span className="truncate">{route.name}</span>
-          </p>
+          {/* con la ruta comenzada el nombre sobra: el mapa queda más libre */}
+          {!startedAt && (
+            <p className="pointer-events-auto flex min-w-0 items-center gap-2 rounded-full bg-surface-container-lowest px-4 py-3 font-headline text-sm font-bold shadow-lg ring-1 ring-outline-variant/60">
+              <Mountain className="size-4 shrink-0 text-primary" aria-hidden />
+              <span className="truncate">{route.name}</span>
+            </p>
+          )}
         </div>
         {offM !== null &&
           (offHidden ? (
