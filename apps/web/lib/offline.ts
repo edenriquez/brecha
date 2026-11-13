@@ -2,6 +2,7 @@
 
 import { useEffect, useSyncExternalStore } from "react";
 import type { ProfilePoint } from "@/lib/gpx";
+import { cellsAreaKm2, zoneCells, zoneTiles, type Tile } from "@/lib/hex-grid";
 import { DEM_TILES, MAP_STYLE, SATELLITE_TILES } from "@/lib/map-sources";
 import type { RouteSummary } from "@/lib/routes";
 
@@ -16,28 +17,59 @@ const ROUTE_KEY = "/__descargas/";
 const COVER_KEY = "/__portadas/";
 
 type LineCoords = [number, number][];
+type Bounds = [w: number, s: number, e: number, n: number];
 
 // igual que BASE en lib/lidar-layer.ts (aquí sin maplibre)
 const LAYERS_BASE = `${process.env.NEXT_PUBLIC_SUPABASE_URL}/storage/v1/object/public/capas/lidar-izta`;
-// los que pide el visor; el relieve LiDAR (66 MB) no se guarda
-const LAYER_FILES = ["capa.json", "brechas.pmtiles", "cauces.pmtiles", "zonas_volcanes.pmtiles", "miradores.geojson", "campamento.geojson", "cascadas.geojson"];
-const LAYERS_MB = 3.3;
+// capas regionales por grupo: archivos completos (son chicos); los megas son aproximados, para la hoja
+const LAYER_GROUPS = {
+  roads: { files: ["brechas.pmtiles"], mb: 0.4 },
+  waterfalls: { files: ["cauces.pmtiles", "cascadas.geojson"], mb: 1.8 },
+  viewpoints: { files: ["zonas_volcanes.pmtiles", "miradores.geojson", "campamento.geojson"], mb: 1.1 },
+};
+// del relieve LiDAR solo se bajan las teselas de la zona; estos van completos
+const LIDAR_FILES = ["cobertura.geojson", "candidatos.geojson", "hallazgos.geojson"];
+const LIDAR_ZOOMS: [number, number] = [9, 15];
 
-/** Si el trazo toca la zona analizada (los `bounds` de capa.json); false si no se pudo leer. */
-export async function touchesLayerZone(line: LineCoords, signal?: AbortSignal) {
+/** capa.json: el relieve viene partido en varios PMTiles (como en lib/lidar-layer.ts). */
+type LayerManifest = { partes: string[]; bounds: Bounds };
+
+/** Los `bounds` de capa.json si el trazo toca la zona analizada; null si no la toca o no se pudo leer. */
+export async function layerZone(line: LineCoords, signal?: AbortSignal): Promise<Bounds | null> {
   try {
-    const { bounds } = await getJson<{ bounds: [number, number, number, number] }>(`${LAYERS_BASE}/capa.json`, signal);
+    const { bounds } = await getJson<LayerManifest>(`${LAYERS_BASE}/capa.json`, signal);
     const [w, s, e, n] = bounds;
     const lngs = line.map((p) => p[0]);
     const lats = line.map((p) => p[1]);
-    return Math.min(...lngs) <= e && Math.max(...lngs) >= w && Math.min(...lats) <= n && Math.max(...lats) >= s;
+    return Math.min(...lngs) <= e && Math.max(...lngs) >= w && Math.min(...lats) <= n && Math.max(...lats) >= s ? bounds : null;
   } catch {
     if (signal?.aborted) throw signal.reason;
-    return false;
+    return null;
   }
 }
 
+/** Si el trazo toca la zona analizada (los `bounds` de capa.json); false si no se pudo leer. */
+export async function touchesLayerZone(line: LineCoords, signal?: AbortSignal) {
+  return !!(await layerZone(line, signal));
+}
+
 export type OfflineRouteInfo = Pick<RouteSummary, "slug" | "name" | "place_label" | "difficulty" | "distance_km" | "elevation_gain_m" | "duration_min" | "cover_url">;
+
+/** Qué se lleva además del mapa y el satélite (obligatorios) y los nombres (van en el mapa base). */
+export type DownloadOptions = {
+  /** teselas del modelo de elevación: relieve 3D y sombreado */
+  terrain: boolean;
+  /** se dibujan del mismo modelo de elevación: sin relieve no hay curvas */
+  contours: boolean;
+  roads: boolean;
+  waterfalls: boolean;
+  viewpoints: boolean;
+  lidar: boolean;
+};
+
+export const RADII_KM = [2, 5, 10] as const;
+export const DEFAULT_RADIUS_KM = 5;
+export const DEFAULT_OPTIONS: DownloadOptions = { terrain: true, contours: true, roads: true, waterfalls: false, viewpoints: false, lidar: false };
 
 export type OfflineRoute = OfflineRouteInfo & {
   line: LineCoords;
@@ -48,7 +80,12 @@ export type OfflineRoute = OfflineRouteInfo & {
   savedAt: string;
   /** false mientras baja o si se cortó; los registros viejos no lo traen y cuentan como completos */
   complete?: boolean;
-  /** true si al terminar quedaron guardadas las capas regionales (la ruta toca su zona) */
+  /** Zona descargada: radio y celdas de lib/hex-grid.ts. Los registros de formato anterior no la traen */
+  radiusKm?: number;
+  cells?: string[];
+  /** Lo que se guardó; las capas regionales y el LiDAR solo quedan en true si la ruta toca su zona */
+  options?: DownloadOptions;
+  /** Formato anterior: true si quedaron guardadas las capas regionales. Solo se lee */
   layers?: boolean;
 };
 
@@ -57,21 +94,17 @@ export const OFFLINE_ZOOM = { min: 10, max: 16 };
 
 const RAD = Math.PI / 180;
 const EARTH_M = 40075016.686;
-// alrededor del sendero, más angosto entre más detalle: en 3D lo lejano se ve con zooms bajos
+// contexto lejano (zooms ≤ 12, para el horizonte en 3D): corredor alrededor del sendero, no hexágonos
 const OUTER_M = 15000;
-const CORRIDOR: { upTo: number; meters: number }[] = [
-  { upTo: 12, meters: OUTER_M },
-  { upTo: 14, meters: 3000 },
-  { upTo: 15, meters: 1200 },
-  { upTo: 17, meters: 500 },
-];
-// teselas de 256 px: con el mapa en zoom 16 se piden de zoom 17
-const SATELLITE_ZOOMS: [number, number] = [8, 17];
-const DEM_ZOOMS: [number, number] = [8, 14];
+const CONTEXT_ZOOMS: [number, number] = [8, 12];
+// detalle completo dentro de la zona de hexágonos; teselas de 256 px: con el mapa en zoom 16 se piden de zoom 17
+const SATELLITE_MAX_ZOOM = 17;
 const VECTOR_MAX_ZOOM = 14;
-const MAX_TILES = 4000;
-// para estimar antes de bajar; lo real se mide al descargar
-const KB_PER_TILE = { satellite: 22, dem: 60, vector: 30 };
+const DEM_MAX_ZOOM = 14;
+// ≈ 15 000 con 10 km alrededor de una ruta de ~25 km y todo encendido
+const MAX_TILES = 20000;
+// para estimar antes de bajar; lo real se mide al descargar (LiDAR: 66 MB entre 10 056 teselas)
+const KB_PER_TILE = { satellite: 22, dem: 60, vector: 30, lidar: 6.5 };
 const GLYPH_RANGES = ["0-255", "256-511", "8192-8447"];
 const CONCURRENCY = 6;
 
@@ -117,11 +150,11 @@ function densify(line: LineCoords, step: number) {
   return out;
 }
 
-/** Teselas `z/x/y` que tocan el corredor alrededor del trazo. */
+/** Teselas `z/x/y` que tocan el corredor de contexto (OUTER_M) alrededor del trazo. */
 function corridorTiles(line: LineCoords, [minZoom, maxZoom]: [number, number]) {
-  const tiles: [number, number, number][] = [];
+  const tiles: Tile[] = [];
+  const buffer = OUTER_M;
   for (let z = minZoom; z <= maxZoom; z++) {
-    const buffer = (CORRIDOR.find((c) => z <= c.upTo) ?? CORRIDOR[CORRIDOR.length - 1]).meters;
     const tileM = (EARTH_M * Math.cos(line[0][1] * RAD)) / 2 ** z;
     const last = 2 ** z - 1;
     const seen = new Set<number>();
@@ -144,7 +177,13 @@ function corridorTiles(line: LineCoords, [minZoom, maxZoom]: [number, number]) {
   return tiles;
 }
 
-function tileUrl(template: string, [z, x, y]: [number, number, number]) {
+/** Contexto lejano por corredor más detalle por la zona de hexágonos, sin repetir. */
+function areaTiles(line: LineCoords, cells: string[], [minZoom, maxZoom]: [number, number]): Tile[] {
+  const context = corridorTiles(line, [minZoom, Math.min(maxZoom, CONTEXT_ZOOMS[1])]);
+  return maxZoom > CONTEXT_ZOOMS[1] ? [...context, ...zoneTiles(cells, [Math.max(minZoom, CONTEXT_ZOOMS[1] + 1), maxZoom])] : context;
+}
+
+function tileUrl(template: string, [z, x, y]: Tile) {
   return template.replace("{z}", String(z)).replace("{x}", String(x)).replace("{y}", String(y));
 }
 
@@ -153,13 +192,36 @@ export function tileCacheKey(url: string) {
   return url.replace(/(tiles\.openfreemap\.org\/planet)\/[^/]+(\/\d+\/\d+\/\d+\.pbf)$/, "$1$2");
 }
 
-/** Cuántas teselas y megas ocuparía la ruta, sin pedir nada a la red; `layers` suma las capas regionales. */
-export function estimateDownload(line: LineCoords, layers = false) {
-  const satellite = corridorTiles(line, SATELLITE_ZOOMS).length;
-  const dem = corridorTiles(line, DEM_ZOOMS).length;
-  const vector = corridorTiles(line, [SATELLITE_ZOOMS[0], VECTOR_MAX_ZOOM]).length;
-  const kb = satellite * KB_PER_TILE.satellite + dem * KB_PER_TILE.dem + vector * KB_PER_TILE.vector;
-  return { tiles: satellite + dem + vector, mb: kb / 1024 + (layers ? LAYERS_MB : 0) };
+export type DownloadEstimate = {
+  cells: string[];
+  areaKm2: number;
+  tiles: { satellite: number; dem: number; vector: number; lidar: number };
+  /** megas de cada fila de la hoja, encendida o no; las regionales y el LiDAR en 0 si la ruta no toca su zona */
+  rows: { map: number; terrain: number; roads: number; waterfalls: number; viewpoints: number; lidar: number };
+  /** total de lo encendido */
+  mb: number;
+};
+
+/** Zona, teselas y megas de la descarga, sin pedir nada a la red; `zone` son los `bounds` de capa.json si la ruta los toca. */
+export function estimateDownload(line: LineCoords, radiusKm = DEFAULT_RADIUS_KM, options = DEFAULT_OPTIONS, zone: Bounds | null = null): DownloadEstimate {
+  const cells = zoneCells(line, radiusKm);
+  const tiles = {
+    satellite: areaTiles(line, cells, [CONTEXT_ZOOMS[0], SATELLITE_MAX_ZOOM]).length,
+    dem: areaTiles(line, cells, [CONTEXT_ZOOMS[0], DEM_MAX_ZOOM]).length,
+    vector: areaTiles(line, cells, [CONTEXT_ZOOMS[0], VECTOR_MAX_ZOOM]).length,
+    lidar: zone ? zoneTiles(cells, LIDAR_ZOOMS, zone).length : 0,
+  };
+  const mb = (n: number, kb: number) => (n * kb) / 1024;
+  const rows = {
+    map: mb(tiles.satellite, KB_PER_TILE.satellite) + mb(tiles.vector, KB_PER_TILE.vector),
+    terrain: mb(tiles.dem, KB_PER_TILE.dem),
+    roads: zone ? LAYER_GROUPS.roads.mb : 0,
+    waterfalls: zone ? LAYER_GROUPS.waterfalls.mb : 0,
+    viewpoints: zone ? LAYER_GROUPS.viewpoints.mb : 0,
+    lidar: mb(tiles.lidar, KB_PER_TILE.lidar),
+  };
+  const total = rows.map + (Object.keys(rows) as (keyof typeof rows)[]).reduce((sum, k) => sum + (k !== "map" && options[k] ? rows[k] : 0), 0);
+  return { cells, areaKm2: cellsAreaKm2(cells), tiles, rows, mb: total };
 }
 
 type StyleJson = {
@@ -189,7 +251,7 @@ async function styleResources(signal: AbortSignal) {
       maxzoom = tileJson.maxzoom ?? maxzoom;
     }
     const top = Math.min(maxzoom, VECTOR_MAX_ZOOM);
-    if (tiles?.[0]) sources.push({ template: tiles[0], zooms: [Math.min(SATELLITE_ZOOMS[0], top), top] });
+    if (tiles?.[0]) sources.push({ template: tiles[0], zooms: [Math.min(CONTEXT_ZOOMS[0], top), top] });
   }
   const fonts = new Set<string>();
   for (const layer of style.layers) {
@@ -204,10 +266,10 @@ async function styleResources(signal: AbortSignal) {
   return { urls, sources };
 }
 
-async function fetchInto(cache: Cache, url: string, signal: AbortSignal, key = url) {
+async function fetchInto(cache: Cache, url: string, signal: AbortSignal, key = url, load = () => fetch(url, { signal })) {
   for (let attempt = 0; ; attempt++) {
     try {
-      const res = await fetch(url, { signal });
+      const res = await load();
       // teselas que no existen (mar, sin imagen): no hay nada que guardar
       if (res.status === 404 || res.status === 204) return 0;
       if (!res.ok) throw new Error(`${url}: ${res.status}`);
@@ -237,45 +299,104 @@ export async function getOfflineRoute(slug: string): Promise<OfflineRoute | null
   return res ? res.json() : null;
 }
 
-/** Baja estilo, satélite, relieve y mapa base del corredor de la ruta, y guarda la ruta para el visor sin conexión. */
+/**
+ * Teselas del relieve LiDAR que tocan la zona, leídas de cada parte con pmtiles. Se guardan en el cache de mapas
+ * con una llave estable por parte y tesela (`…/lidar-izta/relieve-1/{z}/{x}/{y}`) que public/sw.js sirve sin red;
+ * van por parte porque las partes se enciman en los zooms bajos.
+ */
+async function lidarTiles(cells: string[], signal: AbortSignal) {
+  // pmtiles se carga aquí y no arriba: offline.ts va en todas las páginas (la píldora de descargas)
+  const [{ PMTiles }, { partes }] = await Promise.all([import("pmtiles"), getJson<LayerManifest>(`${LAYERS_BASE}/capa.json`, signal)]);
+  const parts = await Promise.all(
+    partes.map(async (file) => {
+      const pmtiles = new PMTiles(`${LAYERS_BASE}/${file}`);
+      const h = await pmtiles.getHeader();
+      return { pmtiles, name: file.replace(/\.pmtiles$/, ""), bounds: [h.minLon, h.minLat, h.maxLon, h.maxLat] as Bounds };
+    }),
+  );
+  return parts.flatMap(({ pmtiles, name, bounds }) =>
+    zoneTiles(cells, LIDAR_ZOOMS, bounds).map(([z, x, y]) => ({
+      key: `${LAYERS_BASE}/${name}/${z}/${x}/${y}`,
+      load: async () => {
+        const tile = await pmtiles.getZxy(z, x, y, signal);
+        // ráster WebP; sin tesela (fuera de lo analizado) no hay nada que guardar
+        return tile ? new Response(tile.data, { headers: { "Content-Type": "image/webp" } }) : new Response(null, { status: 404 });
+      },
+    })),
+  );
+}
+
+export type DownloadChoice = { radiusKm: number; options: DownloadOptions };
+
+/** Baja estilo, mapa base, satélite y lo elegido de la zona de la ruta, y la guarda para el visor sin conexión. */
 export async function downloadRoute(
   route: OfflineRouteInfo,
   line: LineCoords,
   profile: ProfilePoint[] | null,
   onProgress: (done: number, total: number) => void,
   signal: AbortSignal,
+  choice?: DownloadChoice,
 ): Promise<OfflineRoute> {
   // sin esto el navegador puede borrar el cache cuando le falta espacio
   await navigator.storage?.persist?.().catch(() => false);
-  const [style, layers] = await Promise.all([styleResources(signal), touchesLayerZone(line, signal)]);
-  const tileTemplates = [
-    { template: SATELLITE_TILES, zooms: SATELLITE_ZOOMS },
-    { template: DEM_TILES, zooms: DEM_ZOOMS },
+  const prev = await getOfflineRoute(route.slug);
+  // sin elegir (Reanudar, Guardadas) se repite lo de la vez anterior o lo de siempre
+  const radiusKm = choice?.radiusKm ?? prev?.radiusKm ?? DEFAULT_RADIUS_KM;
+  const asked = choice?.options ?? prev?.options ?? DEFAULT_OPTIONS;
+  const [style, zone] = await Promise.all([styleResources(signal), layerZone(line, signal)]);
+  const options: DownloadOptions = {
+    terrain: asked.terrain,
+    contours: asked.terrain && asked.contours,
+    roads: !!zone && asked.roads,
+    waterfalls: !!zone && asked.waterfalls,
+    viewpoints: !!zone && asked.viewpoints,
+    lidar: !!zone && asked.lidar,
+  };
+  const cells = zoneCells(line, radiusKm);
+  const tileTemplates: { template: string; zooms: [number, number] }[] = [
+    { template: SATELLITE_TILES, zooms: [CONTEXT_ZOOMS[0], SATELLITE_MAX_ZOOM] },
+    ...(options.terrain ? [{ template: DEM_TILES, zooms: [CONTEXT_ZOOMS[0], DEM_MAX_ZOOM] as [number, number] }] : []),
     ...style.sources,
   ];
-  const tiles = [...new Set(tileTemplates.flatMap(({ template, zooms }) => corridorTiles(line, zooms).map((t) => tileUrl(template, t))))];
-  if (tiles.length > MAX_TILES) throw new Error("La ruta es demasiado extensa para guardarla sin conexión.");
+  const tiles = [...new Set(tileTemplates.flatMap(({ template, zooms }) => areaTiles(line, cells, zooms).map((t) => tileUrl(template, t))))];
+  const lidar = options.lidar ? await lidarTiles(cells, signal) : [];
+  if (tiles.length + lidar.length > MAX_TILES) throw new Error("La ruta es demasiado extensa para guardarla sin conexión.");
 
   // el registro va antes de bajar: si se corta, la ruta queda incompleta y sus teselas se pueden borrar
   const saveRecord = async (record: OfflineRoute) =>
     (await routesCache()).put(ROUTE_KEY + encodeURIComponent(route.slug), new Response(JSON.stringify(record), { headers: { "Content-Type": "application/json" } }));
   // al reanudar se parte de lo ya bajado: las teselas en cache se saltan
-  const prev = await getOfflineRoute(route.slug);
   let bytes = prev?.complete === false ? prev.bytes : 0;
-  const record: OfflineRoute = { ...route, line, profile, tiles: tiles.map(tileCacheKey), bytes, savedAt: new Date().toISOString(), complete: false };
+  const record: OfflineRoute = {
+    ...route,
+    line,
+    profile,
+    tiles: [...tiles.map(tileCacheKey), ...lidar.map((t) => t.key)],
+    bytes,
+    savedAt: new Date().toISOString(),
+    complete: false,
+    radiusKm,
+    cells,
+    options,
+  };
   await saveRecord(record);
   const storage = await navigator.storage?.estimate?.().catch(() => undefined);
-  if (storage?.quota !== undefined && storage.usage !== undefined && storage.quota - storage.usage < estimateDownload(line, layers).mb * 1024 * 1024) {
+  if (storage?.quota !== undefined && storage.usage !== undefined && storage.quota - storage.usage < estimateDownload(line, radiusKm, options, zone).mb * 1024 * 1024) {
     throw new Error("No hay espacio suficiente en el dispositivo");
   }
 
   const [mapCache, styleCache, layersCache] = await Promise.all([caches.open(MAP_CACHE), caches.open(STYLE_CACHE), caches.open(LAYERS_CACHE)]);
   // las capas se vuelven a bajar en cada descarga (son pocos megas): así se actualizan
-  const layerUrls = layers ? LAYER_FILES.map((f) => `${LAYERS_BASE}/${f}`) : [];
-  const jobs = [
+  const layerFiles = [
+    ...(Object.keys(LAYER_GROUPS) as (keyof typeof LAYER_GROUPS)[]).flatMap((g) => (options[g] ? LAYER_GROUPS[g].files : [])),
+    ...(options.lidar ? LIDAR_FILES : []),
+  ];
+  const layerUrls = layerFiles.length ? ["capa.json", ...layerFiles].map((f) => `${LAYERS_BASE}/${f}`) : [];
+  const jobs: { url: string; cache: Cache; key: string; load?: () => Promise<Response> }[] = [
     ...style.urls.map((url) => ({ url, cache: styleCache, key: url })),
     ...layerUrls.map((url) => ({ url, cache: layersCache, key: url })),
     ...tiles.map((url) => ({ url, cache: mapCache, key: tileCacheKey(url) })),
+    ...lidar.map(({ key, load }) => ({ url: key, cache: mapCache, key, load })),
   ];
   let done = 0;
   let next = 0;
@@ -289,7 +410,7 @@ export async function downloadRoute(
           const job = jobs[next++];
           try {
             // compartida con otra ruta ya descargada
-            if (job.cache !== mapCache || !(await mapCache.match(job.key))) bytes += await fetchInto(job.cache, job.url, signal, job.key);
+            if (job.cache !== mapCache || !(await mapCache.match(job.key))) bytes += await fetchInto(job.cache, job.url, signal, job.key, job.load);
           } catch (e) {
             failed = true;
             throw e;
@@ -306,10 +427,16 @@ export async function downloadRoute(
     await saveRecord({ ...record, bytes });
     throw e;
   }
-  const saved: OfflineRoute = { ...record, bytes, complete: true, ...(layers && { layers: true }) };
+  const saved: OfflineRoute = { ...record, bytes, complete: true };
   await saveRecord(saved);
   await cacheOfflineShell();
   return saved;
+}
+
+/** Si la ruta usa archivos del cache de capas regionales (se comparten entre rutas). */
+function hasLayerFiles(r: OfflineRoute) {
+  const o = r.options;
+  return !!r.layers || !!o && (o.roads || o.waterfalls || o.viewpoints || o.lidar);
 }
 
 export async function deleteOfflineRoute(slug: string) {
@@ -320,7 +447,7 @@ export async function deleteOfflineRoute(slug: string) {
   const kept = new Set(others.flatMap((r) => r.tiles));
   const mapCache = await caches.open(MAP_CACHE);
   await Promise.all(target.tiles.filter((t) => !kept.has(t)).map((t) => mapCache.delete(t)));
-  if (!others.some((r) => r.layers)) await caches.delete(LAYERS_CACHE);
+  if (!others.some(hasLayerFiles)) await caches.delete(LAYERS_CACHE);
   const cache = await routesCache();
   await Promise.all([cache.delete(ROUTE_KEY + encodeURIComponent(slug)), cache.delete(COVER_KEY + encodeURIComponent(slug))]);
   setDownload(slug, null);
@@ -342,7 +469,7 @@ export type DownloadState =
   | { status: "bajando"; done: number; total: number }
   | { status: "lista"; bytes: number };
 
-type Job = { route: OfflineRouteInfo; line: LineCoords; profile: ProfilePoint[] | null; prev?: DownloadState };
+type Job = { route: OfflineRouteInfo; line: LineCoords; profile: ProfilePoint[] | null; choice?: DownloadChoice; prev?: DownloadState };
 type Downloads = { routes: Readonly<Record<string, DownloadState>> | null; done: number; total: number };
 
 // cola de una ruta a la vez: vive mientras la app está abierta y sobrevive la navegación del cliente
@@ -393,7 +520,7 @@ async function runQueue() {
     const saved = await downloadRoute(job.route, job.line, job.profile, (done, total) => {
         // un progreso tardío no pisa el estado de una ruta que ya no es la actual
         if (current?.controller === controller) setDownload(slug, { status: "bajando", done, total });
-      }, controller.signal);
+      }, controller.signal, job.choice);
     setDownload(slug, { status: "lista", bytes: saved.bytes });
   } catch (e) {
     let error: string | undefined;
@@ -409,10 +536,10 @@ async function runQueue() {
   void runQueue();
 }
 
-/** Agrega la ruta a la cola si no está ya bajando o esperando. */
-export function queueDownload(route: OfflineRouteInfo, line: LineCoords, profile: ProfilePoint[] | null) {
+/** Agrega la ruta a la cola si no está ya bajando o esperando; sin `choice`, la zona y capas de la vez anterior o las de siempre. */
+export function queueDownload(route: OfflineRouteInfo, line: LineCoords, profile: ProfilePoint[] | null, choice?: DownloadChoice) {
   if (current?.slug === route.slug || queue.some((j) => j.route.slug === route.slug)) return;
-  queue.push({ route, line, profile, prev: downloads.routes?.[route.slug] });
+  queue.push({ route, line, profile, choice, prev: downloads.routes?.[route.slug] });
   setDownload(route.slug, { status: "en-cola" });
   emitDownloads({ total: downloads.total + 1 });
   void runQueue();

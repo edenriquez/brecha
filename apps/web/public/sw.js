@@ -9,6 +9,8 @@ const ROUTES_CACHE = "brecha-rutas";
 // capas regionales del bucket `capas` de Supabase, completas: las sirve aunque se pidan por rangos (PMTiles)
 const LAYERS_CACHE = "brecha-capas";
 const LAYERS_PATH = "/storage/v1/object/public/capas/";
+// teselas del relieve LiDAR que guardó la descarga, una llave por parte del relieve (no existen en el bucket)
+const LIDAR_TILE = /\/relieve-\d+\/\d+\/\d+\/\d+$/;
 // scripts y estilos de /_next/static/ que bajan al navegar; aparte para que la poda del shell no los borre
 const STATIC_CACHE = "brecha-estaticos";
 const STATIC_MAX = 60;
@@ -47,7 +49,7 @@ self.addEventListener("fetch", (event) => {
     return;
   }
   if (url.pathname.startsWith(LAYERS_PATH)) {
-    event.respondWith(layerFile(request));
+    event.respondWith(LIDAR_TILE.test(url.pathname) ? lidarTile(request) : layerFile(request));
     return;
   }
   if (!MAP_HOSTS.includes(url.hostname)) return;
@@ -77,6 +79,11 @@ async function cacheFirst(cacheName, request, key = request.url) {
 async function layerFile(request) {
   const cached = await (await caches.open(LAYERS_CACHE)).match(request.url, { ignoreVary: true });
   return cached ? byteRange(cached, request.headers.get("Range")) : fetch(request);
+}
+
+/** Solo del cache de mapas: fuera de lo descargado no hay tesela. */
+async function lidarTile(request) {
+  return (await (await caches.open(MAP_CACHE)).match(request.url, { ignoreVary: true })) ?? new Response(null, { status: 404 });
 }
 
 /** 206 con el trozo pedido de `response` (`bytes=a-b`, `bytes=a-` o `bytes=-n`); sin Range, la respuesta entera. */
