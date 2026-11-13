@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { LineString } from "geojson";
 import Image from "next/image";
 import Link from "next/link";
@@ -25,19 +25,21 @@ import {
 import { OutingCard } from "@/components/outing-card";
 import { RouteCard } from "@/components/route-card";
 import { RouteMap } from "@/components/route-map-lazy";
+import type { Position } from "@/components/place-sheet";
 import { SearchBox } from "@/components/search-box";
 import { TopNav } from "@/components/top-nav";
+import { UserMenu } from "@/components/user-menu";
 import {
   ACTIVITY_KEY,
   AREA_KEY,
   countPanelFilters,
   DIFFICULTY_KEY,
   formatArea,
-  inArea,
   matchesFilters,
   matchesQuery,
   parseActivity,
   parseArea,
+  PLACE_KEY,
   QUERY_KEY,
   RANGE_KEYS,
   ROUTE_KEY,
@@ -49,13 +51,14 @@ import { ACTIVITY, DIFFICULTY, formatDuration, formatKm, type Activity, type Dif
 import type { ProfilePoint } from "@/lib/gpx";
 import type { LineCoords } from "@/lib/maplibre";
 import type { OutingCardData } from "@/lib/outings";
+import { areaAround, describePlace, findState, inPlace, MY_LOCATION } from "@/lib/places";
 import { createClient } from "@/lib/supabase/client";
 import { useUrlParams } from "@/lib/use-url-params";
 
 const DIFFICULTIES: Difficulty[] = ["facil", "moderada", "dificil"];
 /** El breakpoint `lg` de Tailwind: desde ahí la lista y el mapa se ven lado a lado. */
 const SIDE_BY_SIDE = "(min-width: 1024px)";
-const CLEARED = Object.fromEntries([QUERY_KEY, DIFFICULTY_KEY, TYPE_KEY, AREA_KEY, ...RANGE_KEYS].map((k) => [k, null]));
+const CLEARED = Object.fromEntries([QUERY_KEY, DIFFICULTY_KEY, TYPE_KEY, AREA_KEY, PLACE_KEY, ...RANGE_KEYS].map((k) => [k, null]));
 const ACTIVITY_ICON: Record<Activity, React.ReactNode> = {
   hiking: <Footprints className="size-5" />,
   bici: <Bike className="size-5" />,
@@ -74,7 +77,32 @@ export function Explorer({ routes: allRoutes, outings: allOutings }: { routes: R
   const difficulty = params.get(DIFFICULTY_KEY);
   const tab = params.get("ver") === "salidas" ? "salidas" : "rutas";
   const areaParam = params.get(AREA_KEY);
-  const area = useMemo(() => parseArea(areaParam), [areaParam]);
+  const placeParam = params.get(PLACE_KEY);
+  // un estado sin `zona` (enlace escrito a mano) usa la caja de su límite
+  const area = useMemo(() => parseArea(areaParam) ?? findState(placeParam)?.bbox ?? null, [areaParam, placeParam]);
+  // el lugar del buscador nombra la zona; si es un estado, la lista se recorta a su límite
+  const place = area ? describePlace(placeParam) : null;
+
+  // tu posición para el punto azul: solo vale mientras el lugar sea "gps"
+  const [position, setPosition] = useState<Position | null>(null);
+  const me = placeParam === MY_LOCATION ? position : null;
+  // al recargar o llegar con `lugar=gps` no hay posición: se pide una vez; si no llega, queda la zona sin punto
+  const askedPosition = useRef(false);
+  useEffect(() => {
+    if (placeParam !== MY_LOCATION || position || askedPosition.current || !navigator.geolocation) return;
+    askedPosition.current = true;
+    navigator.geolocation.getCurrentPosition(
+      (pos) => {
+        const current = new URLSearchParams(window.location.search);
+        if (current.get(PLACE_KEY) !== MY_LOCATION) return;
+        const at = { lat: pos.coords.latitude, lng: pos.coords.longitude };
+        setPosition(at);
+        if (!parseArea(current.get(AREA_KEY))) setParams({ [AREA_KEY]: areaAround(at) });
+      },
+      () => {},
+      { enableHighAccuracy: false, timeout: 10000, maximumAge: 10 * 60 * 1000 },
+    );
+  }, [placeParam, position, setParams]);
   // rangos y tipo no tienen controles aquí, pero un enlace puede traerlos
   const filtering = Boolean(query.trim() || difficulty || countPanelFilters(params) || area);
   // lo que se ve tras mover el mapa a mano; con él aparece "Buscar en esta zona"
@@ -82,6 +110,9 @@ export function Explorer({ routes: allRoutes, outings: allOutings }: { routes: R
   const canSearchArea = moved !== null && (!area || formatArea(moved) !== formatArea(area));
 
   const [view, setView] = useState<"lista" | "mapa">("lista");
+  // la isla inferior se esconde al bajar por la lista y vuelve al subir; arriba del todo y en el mapa siempre se ve
+  const [islandHidden, setIslandHidden] = useState(false);
+  const lastScroll = useRef(0);
   // en ambas pestañas la selección es una ruta: es lo que tiene pin en el mapa
   const [selectedId, setSelectedId] = useState<string | null>(null);
 
@@ -103,7 +134,7 @@ export function Explorer({ routes: allRoutes, outings: allOutings }: { routes: R
   // la zona solo recorta el listado: el mapa sigue mostrando los pines de fuera para poder ir hacia ellos
   const filtered = useMemo(() => routes.filter((r) => matchesFilters(r, params)), [routes, params]);
   const matching = useMemo(() => filtered.filter((r) => matchesQuery(routeHaystack(r), query)), [filtered, query]);
-  const visible = useMemo(() => (area ? matching.filter((r) => inArea(r, area)) : matching), [matching, area]);
+  const visible = useMemo(() => (area ? matching.filter((r) => inPlace(r, area, placeParam)) : matching), [matching, area, placeParam]);
   const matchingOutings = useMemo(() => {
     const byId = new Map(filtered.map((r) => [r.id, r]));
     return outings.filter((o) => {
@@ -113,9 +144,9 @@ export function Explorer({ routes: allRoutes, outings: allOutings }: { routes: R
   }, [filtered, outings, query]);
   const visibleOutings = useMemo(() => {
     if (!area) return matchingOutings;
-    const inside = new Set(filtered.filter((r) => inArea(r, area)).map((r) => r.id));
-    return matchingOutings.filter((o) => inside.has(o.route.id));
-  }, [matchingOutings, area, filtered]);
+    const ids = new Set(filtered.filter((r) => inPlace(r, area, placeParam)).map((r) => r.id));
+    return matchingOutings.filter((o) => ids.has(o.route.id));
+  }, [matchingOutings, area, placeParam, filtered]);
   const mapRoutes = useMemo(() => {
     if (tab === "rutas") return matching;
     const withOutings = new Set(matchingOutings.map((o) => o.route.id));
@@ -163,17 +194,40 @@ export function Explorer({ routes: allRoutes, outings: allOutings }: { routes: R
 
   return (
     <>
-      <TopNav search={<SearchBox value={query} onChange={(q) => setParams({ [QUERY_KEY]: q || null })} />} />
+      <TopNav
+        search={
+          <SearchBox
+            query={query}
+            place={place ? placeParam : null}
+            routes={routes}
+            onChange={(changes, at) => {
+              // la zona elegida reemplaza a la que se veía tras mover el mapa
+              if (AREA_KEY in changes) setMoved(null);
+              // elegir un lugar deja entrada en el historial (atrás regresa al anterior); el texto solo reemplaza
+              const picked = PLACE_KEY in changes;
+              if (picked) setPosition(at ?? null);
+              setParams(changes, { push: picked });
+            }}
+          />
+        }
+      />
       <main className="relative flex flex-1 overflow-hidden">
         <section
           className={clsx(
             "@container h-full w-full overflow-y-auto bg-surface-container-low px-4 py-4 sm:px-6 lg:block lg:w-[560px] lg:shrink-0 lg:px-4 xl:w-[620px]",
             view === "mapa" && "hidden",
           )}
+          onScroll={(e) => {
+            const top = e.currentTarget.scrollTop;
+            // umbral de 12 px para que el temblor del dedo no la haga parpadear
+            if (top > 0 && Math.abs(top - lastScroll.current) < 12) return;
+            setIslandHidden(top > 0 && top > lastScroll.current);
+            lastScroll.current = top;
+          }}
         >
           <p className="mb-3 inline-flex items-center gap-1.5 text-xs font-semibold text-primary-container">
             <Navigation className="size-3.5 fill-primary-container" aria-hidden />
-            Rutas cerca de Ciudad de México
+            {place ? `Rutas ${place.where}` : "Rutas cerca de Ciudad de México"}
           </p>
 
           <div className="mb-3 grid grid-cols-3 gap-2">
@@ -208,9 +262,9 @@ export function Explorer({ routes: allRoutes, outings: allOutings }: { routes: R
           <div className="no-scrollbar mb-3 flex items-center gap-2 overflow-x-auto py-1">
             {area && (
               <>
-                <Chip active onClick={() => setParams({ [AREA_KEY]: null })}>
+                <Chip active onClick={() => setParams({ [AREA_KEY]: null, [PLACE_KEY]: null })}>
                   <MapPinned className="size-3.5" aria-hidden />
-                  Zona del mapa
+                  {place?.label ?? "Zona del mapa"}
                   <X className="size-3.5" aria-label="Quitar" />
                 </Chip>
                 <span className="mx-1 h-5 w-px shrink-0 bg-outline-variant" aria-hidden />
@@ -249,7 +303,9 @@ export function Explorer({ routes: allRoutes, outings: allOutings }: { routes: R
               ) : (
                 <Empty>
                   {area && matching.length
-                    ? "No hay rutas en esta zona del mapa. Aléjate un poco y busca de nuevo."
+                    ? place
+                      ? `Todavía no hay rutas ${place.where}. Prueba con otro lugar o aléjate en el mapa.`
+                      : "No hay rutas en esta zona del mapa. Aléjate un poco y busca de nuevo."
                     : filtering
                       ? "Ninguna ruta coincide con tu búsqueda."
                       : activity === "hiking"
@@ -297,6 +353,7 @@ export function Explorer({ routes: allRoutes, outings: allOutings }: { routes: R
             track={shape === undefined ? undefined : (shape?.line ?? null)}
             profile={shape?.profile ?? null}
             area={area}
+            me={me}
             onUserMove={setMoved}
             onTourChange={setTouring}
           />
@@ -305,7 +362,7 @@ export function Explorer({ routes: allRoutes, outings: allOutings }: { routes: R
               type="button"
               onClick={() => {
                 if (!moved) return;
-                setParams({ [AREA_KEY]: formatArea(moved) });
+                setParams({ [AREA_KEY]: formatArea(moved), [PLACE_KEY]: null });
                 setMoved(null);
                 setView("lista");
               }}
@@ -318,14 +375,29 @@ export function Explorer({ routes: allRoutes, outings: allOutings }: { routes: R
           {selected && !touring && <MapPeek route={selected} />}
         </section>
 
-        <button
-          type="button"
-          onClick={() => setView((v) => (v === "lista" ? "mapa" : "lista"))}
-          className="absolute bottom-5 left-1/2 z-20 flex -translate-x-1/2 items-center gap-2 rounded-full bg-on-surface px-5 py-3 font-headline text-sm font-semibold text-surface shadow-lg active:scale-95 lg:hidden"
+        {/* isla: con el menú del perfil abierto (aria-expanded) no se esconde */}
+        <div
+          className={clsx(
+            "absolute bottom-5 left-1/2 z-20 flex -translate-x-1/2 items-center gap-1 rounded-full bg-on-surface p-1 shadow-lg transition-transform duration-300 motion-reduce:transition-none lg:hidden",
+            islandHidden && view === "lista" && "translate-y-[calc(100%+1.5rem)] has-[[aria-expanded=true]]:translate-y-0",
+          )}
         >
-          {view === "lista" ? <MapIcon className="size-4" aria-hidden /> : <List className="size-4" aria-hidden />}
-          {view === "lista" ? "Ver mapa" : "Ver lista"}
-        </button>
+          <button
+            type="button"
+            onClick={() => {
+              setView((v) => (v === "lista" ? "mapa" : "lista"));
+              setIslandHidden(false);
+            }}
+            className="flex items-center gap-2 rounded-full px-4 py-2 font-headline text-sm font-semibold text-surface active:scale-95"
+          >
+            {view === "lista" ? <MapIcon className="size-4" aria-hidden /> : <List className="size-4" aria-hidden />}
+            {view === "lista" ? "Ver mapa" : "Ver lista"}
+          </button>
+          {/* desde md el perfil ya está en el encabezado */}
+          <div className="md:hidden">
+            <UserMenu island />
+          </div>
+        </div>
       </main>
     </>
   );
@@ -346,7 +418,7 @@ function MapPeek({ route }: { route: RouteSummary }) {
   return (
     <Link
       href={`/rutas/${route.slug}`}
-      className="absolute inset-x-3 bottom-20 z-10 flex items-center gap-3 rounded-2xl bg-surface-container-lowest p-2.5 shadow-lg ring-1 ring-outline-variant/50 lg:hidden"
+      className="absolute inset-x-3 bottom-24 z-10 flex items-center gap-3 rounded-2xl bg-surface-container-lowest p-2.5 shadow-lg ring-1 ring-outline-variant/50 lg:hidden"
     >
       <div className="relative size-16 shrink-0 overflow-hidden rounded-xl bg-surface-container">
         {route.cover_url ? (
