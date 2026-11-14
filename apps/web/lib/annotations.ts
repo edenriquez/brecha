@@ -96,15 +96,16 @@ export function sliceLine(line: [number, number][], km: number[], from: number, 
 
 /**
  * Lo que toca avisar en el recorrido. `km`: dónde vas sobre la ida (de regreso, total − lo regresado); `back`: de regreso
- * "adelante" es km decreciente; `seen`: ids ya avisados en este recorrido.
+ * "adelante" es km decreciente; `seen`: ids ya avisados en este recorrido, o `tipo:km` (lo reportado en el visor cambia de id al subir).
  * `notice`: el aviso más cercano adelante, de 30 m atrás a 250 m adelante sobre la ruta, con los metros en línea recta.
  * `traction`: el tramo marcado en que vas si cambia la tracción respecto al anterior, con lo que falta de él.
  */
 export function upcoming(annotations: RouteAnnotation[], totalKm: number, km: number, back: boolean, pos: [number, number], seen: Set<string>) {
   const dir = back ? -1 : 1;
+  const isSeen = (a: RouteAnnotation) => seen.has(a.id) || seen.has(`${a.kind}:${a.km}`);
   const notice = notices(annotations)
     .map((a) => ({ a, ahead: (a.km - km) * dir }))
-    .filter(({ a, ahead }) => !seen.has(a.id) && ahead >= -0.03 && ahead <= 0.25)
+    .filter(({ a, ahead }) => !isSeen(a) && ahead >= -0.03 && ahead <= 0.25)
     .sort((x, y) => x.ahead - y.ahead)[0]?.a;
   const segments = tractionSegments(annotations, totalKm);
   const i = segments.findIndex((s) => (back ? s.from < km && km <= s.to : s.from <= km && km < s.to));
@@ -114,6 +115,6 @@ export function upcoming(annotations: RouteAnnotation[], totalKm: number, km: nu
   const changed = !!seg?.id && !!seg.traction && seg.traction !== before && (seg.traction !== "normal" || !!before);
   return {
     notice: notice && { annotation: notice, m: haversineM({ lng: pos[0], lat: pos[1] }, notice) },
-    traction: changed && !seen.has(seg.id!) ? { segment: seg, leftKm: back ? km - seg.from : seg.to - km } : null,
+    traction: changed && !seen.has(seg.id!) && !seen.has(`traccion:${seg.from}`) ? { segment: seg, leftKm: back ? km - seg.from : seg.to - km } : null,
   };
 }
