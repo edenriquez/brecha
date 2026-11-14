@@ -12,6 +12,7 @@ import { routeCloses, TrackMap } from "@/components/track-map";
 import { answerAnnotation, discardAnnotation, enqueueAnnotation, flushAnnotations, forgetUploaded, retryAnnotation, usePendingAnnotations } from "@/lib/annotation-queue";
 import { ANSWERABLE, confirmedLabel, kmLabel, NOTE_MAX, NOTICE, TRACTION, upcoming, type NoticeKind, type RouteAnnotation, type Traction } from "@/lib/annotations";
 import { daysAgoLabel } from "@/lib/community";
+import { haversineM } from "@/lib/gpx";
 import { coverageGeoJson, setCoverage } from "@/lib/coverage-layer";
 import { setLidar, setWaterfalls } from "@/lib/lidar-layer";
 import { setSatellite, setTopoGroup, type maplibregl } from "@/lib/maplibre";
@@ -254,6 +255,7 @@ function List() {
 const REGIONAL_LAYERS = { roads: setRoads, waterfalls: setWaterfalls, viewpoints: setViewpoints, camps: setCamps };
 const ROUND = "pointer-events-auto relative flex size-12 items-center justify-center rounded-full shadow-lg ring-1 ring-outline-variant/60";
 const SECTION = "mb-2 font-mono text-xs tracking-widest text-on-surface-variant uppercase";
+const NO_PERMISSION = "Activa el permiso de ubicación para reportar.";
 const metersLabel = (m: number) => (m < 1000 ? `${Math.round(m)} m` : formatKm(m / 1000));
 const updatedLabel = (a: RouteAnnotation) => `actualizado ${daysAgoLabel(new Date(a.updated_at).toLocaleDateString("en-CA", { timeZone: "America/Mexico_City" }))}`;
 
@@ -264,8 +266,12 @@ function Viewer({ slug }: { slug: string }) {
   const [tracking, setTracking] = useState(false);
   // la hoja de capas, el panel de avance y la de reportar nunca a la vez
   const [open, setOpen] = useState<"capas" | "avance" | "reportar" | null>(null);
-  // lo que se reporta: el punto del trazo donde estabas al abrir la hoja (se fija ahí) y qué se marca
-  const [spot, setSpot] = useState<{ km: number; lng: number; lat: number; offM: number; accuracy: number } | null>(null);
+  // lo que se reporta: el punto del trazo donde estabas al abrir la hoja (una lectura nueva del GPS, se fija ahí) y qué se marca
+  // `fix`: la lectura misma, antes de llevarla al trazo
+  const [spot, setSpot] = useState<{ km: number; lng: number; lat: number; offM: number; accuracy: number; fix: { lng: number; lat: number } } | null>(null);
+  const [spotError, setSpotError] = useState<string | null>(null);
+  // la lectura pedida más reciente: una respuesta de otra apertura de la hoja se ignora
+  const spotRequest = useRef(0);
   const [mark, setMark] = useState<Traction | NoticeKind | null>(null);
   const [note, setNote] = useState("");
   // aviso de fuera del sendero reducido a su ícono; vuelve a salir completo si regresas al sendero y te sales otra vez
@@ -284,10 +290,9 @@ function Viewer({ slug }: { slug: string }) {
   const [back, setBack] = useState(saved?.back ?? false);
   // por dónde iba el recorrido guardado: sin él, un ida y vuelta no sabe en cuál de las dos pasadas vas
   const resume = useRef(saved?.index ?? null);
-  // `stale`: el GPS se apagó después de esta lectura; sirve para el avance pero no para reportar
-  const [progress, setProgress] = useState<(ReturnType<typeof trackProgress> & { accuracy: number; lngLat: [number, number]; stale?: boolean }) | null>(null);
+  const [progress, setProgress] = useState<(ReturnType<typeof trackProgress> & { accuracy: number; lngLat: [number, number] }) | null>(null);
   const gps = useRef<{ lngLat: [number, number]; accuracy: number } | null>(null);
-  // avisos y tramos ya avisados en este recorrido, y el pin tocado con el aviso próximo que había al tocarlo
+  // avisos y tramos ya avisados en este recorrido (ids, y `tipo:km` de lo que reporté yo), y el pin tocado con el aviso próximo que había al tocarlo
   const [seen, setSeen] = useState(() => new Set<string>());
   const [picked, setPicked] = useState<{ id: string; over?: string } | null>(null);
   // con menos de 2 puntos no hay perfil que recorrer
@@ -316,13 +321,15 @@ function Viewer({ slug }: { slug: string }) {
   }, [route, layerBounds]);
   const finished = download?.status === "lista";
   // lo que sigue en el teléfono se pinta junto a lo guardado; al subir algo se relee para cambiar los temporales por las filas
-  const refresh = (signal: AbortSignal) =>
-    refreshAnnotations(slug, signal).then((notes) => {
+  const refresh = (signal: AbortSignal) => {
+    const forget = forgetUploaded(slug);
+    return refreshAnnotations(slug, signal).then((notes) => {
       if (!notes) return;
-      // lo recién subido ya viene en la relectura: sale de la cola
-      forgetUploaded(slug, notes.annotations.map((a) => a.id));
+      // lo subido antes de la relectura ya viene en ella (o se borró): sale de la cola
+      forget();
       setRoute((r) => r && { ...r, ...notes });
     });
+  };
   const [pending, waiting] = usePendingAnnotations(slug, () => refresh(new AbortController().signal));
   const routeAnnotations = route?.annotations;
   const annotations = useMemo(() => {
@@ -490,33 +497,63 @@ function Viewer({ slug }: { slug: string }) {
       drain: true,
     };
   }
-  // sin lectura vigente al abrir la hoja, el punto se fija con la primera que llegue
-  if (open === "reportar" && !spot && progress && !progress.stale && profile) {
-    const [, , lng, lat] = profile[progress.index];
-    setSpot({ km: Math.round((back ? totalKm - progress.doneKm : progress.doneKm) * 100) / 100, lng, lat, offM: progress.offM, accuracy: progress.accuracy });
-  }
   const canReport = !!route.canAnnotate && !!route.routeId && !!routeProfile;
-  function openReport() {
+  // la última lectura conocida puede ser de antes de bloquear el teléfono: el punto sale de una nueva
+  function requestSpot() {
+    const id = ++spotRequest.current;
+    const last = progress?.index ?? resume.current;
     setSpot(null);
+    setSpotError(null);
+    const failed = (e?: GeolocationPositionError) => {
+      if (id === spotRequest.current) setSpotError(e?.code === 1 ? NO_PERMISSION : "No pudimos leer tu ubicación.");
+    };
+    if (!navigator.geolocation) {
+      failed();
+      return;
+    }
+    navigator.geolocation.getCurrentPosition(
+      ({ coords }) => {
+        const p = id === spotRequest.current && profile && locate({ lngLat: [coords.longitude, coords.latitude], accuracy: coords.accuracy }, back, last);
+        if (!p) return;
+        const [, , lng, lat] = profile[p.index];
+        setSpot({ km: Math.round((back ? totalKm - p.doneKm : p.doneKm) * 100) / 100, lng, lat, offM: p.offM, accuracy: p.accuracy, fix: { lng: coords.longitude, lat: coords.latitude } });
+      },
+      failed,
+      { enableHighAccuracy: true, maximumAge: 0, timeout: 20000 },
+    );
+  }
+  function openReport() {
     setMark(null);
     setNote("");
     setOpen("reportar");
+    requestSpot();
+    // para que se vea el punto azul
     if (!tracking) ready?.locate();
   }
-  function report() {
-    if (!spot || !mark) return;
-    const traction = mark in TRACTION;
-    enqueueAnnotation({
-      routeId: route!.routeId!,
-      slug,
-      kind: traction ? "traccion" : (mark as NoticeKind),
-      traction: traction ? (mark as Traction) : null,
-      km: spot.km,
-      lng: spot.lng,
-      lat: spot.lat,
-      note: note.trim() || null,
-    });
+  const closeReport = () => {
+    spotRequest.current++;
     setOpen(null);
+  };
+  // fuera del sendero se marca el punto más cercano del trazo; demasiado lejos ya no es "aquí"
+  const spotOffM = spot && spot.offM > 50 && spot.offM > spot.accuracy ? spot.offM : 0;
+  const tooFar = spotOffM > 300;
+  function report() {
+    if (!spot || !mark || tooFar) return;
+    const traction = mark in TRACTION;
+    // corregir la tracción a menos de 50 m de una marca la reemplaza: dos lecturas casi nunca caen en el mismo punto del perfil
+    // (200 puntos: en rutas de más de 10 km quedan a más de 50 m entre sí); se toma el km de la marca. El km cercano
+    // descarta la otra pasada de un ida y vuelta, que en el mapa queda encima
+    const twin = traction
+      ? annotations
+          ?.filter((a) => a.kind === "traccion" && Math.abs(a.km - spot.km) <= 0.5 && haversineM(spot.fix, a) <= 50)
+          .sort((a, b) => haversineM(spot.fix, a) - haversineM(spot.fix, b))[0]
+      : undefined;
+    const { km, lng, lat } = twin ?? spot;
+    const kind = traction ? "traccion" : (mark as NoticeKind);
+    enqueueAnnotation({ routeId: route!.routeId!, slug, kind, traction: traction ? (mark as Traction) : null, km, lng, lat, note: note.trim() || null });
+    // lo que reporto no me avisa a mí; el id cambia al subir, `tipo:km` no
+    setSeen((s) => new Set(s).add(`${kind}:${km}`));
+    closeReport();
   }
   const rejected = pending.find((p) => p.error);
   return (
@@ -686,8 +723,6 @@ function Viewer({ slug }: { slug: string }) {
           aria-pressed={tracking}
           disabled={!ready}
           onClick={() => {
-            // con el seguimiento prendido, el botón apaga el GPS: la última lectura deja de valer como "donde estás"
-            if (tracking) setProgress((p) => p && { ...p, stale: true });
             ready?.locate();
           }}
           className={clsx(ROUND, tracking ? "bg-primary text-on-primary" : "bg-surface-container-lowest text-on-surface")}
@@ -699,7 +734,7 @@ function Viewer({ slug }: { slug: string }) {
             type="button"
             aria-label="Reportar en este punto"
             aria-expanded={open === "reportar"}
-            onClick={() => (open === "reportar" ? setOpen(null) : openReport())}
+            onClick={() => (open === "reportar" ? closeReport() : openReport())}
             className={clsx(ROUND, "bg-secondary text-on-secondary")}
           >
             <MessageSquarePlus className="size-6" aria-hidden />
@@ -826,7 +861,7 @@ function Viewer({ slug }: { slug: string }) {
       {open === "reportar" && (
         <div className="absolute inset-x-0 bottom-0 max-h-[80dvh] overflow-y-auto rounded-t-3xl bg-surface-container-lowest px-4 pt-2 pb-[max(1rem,env(safe-area-inset-bottom))] shadow-2xl ring-1 ring-outline-variant/60">
           <div className="mb-1 flex justify-center">
-            <button type="button" onClick={() => setOpen(null)} aria-label="Cerrar" className="flex flex-col items-center gap-1 px-8 text-on-surface-variant">
+            <button type="button" onClick={closeReport} aria-label="Cerrar" className="flex flex-col items-center gap-1 px-8 text-on-surface-variant">
               <span className="h-1 w-10 rounded-full bg-outline-variant" aria-hidden />
               <ChevronDown className="size-5" aria-hidden />
             </button>
@@ -839,14 +874,25 @@ function Viewer({ slug }: { slug: string }) {
               {!online && " · sin señal"}
             </span>
           </div>
-          {!spot ? (
+          {spotError ? (
+            <p role="alert" className="mb-3 flex items-center gap-2 rounded-xl bg-error/10 p-2.5 text-sm text-error">
+              <TriangleAlert className="size-4 shrink-0" aria-hidden />
+              <span className="flex-1">{spotError}</span>
+              {spotError !== NO_PERMISSION && (
+                <button type="button" onClick={requestSpot} className="shrink-0 rounded-full border border-error/40 px-3 py-1 font-headline font-semibold hover:bg-error/10">
+                  Reintentar
+                </button>
+              )}
+            </p>
+          ) : !spot ? (
             <p className="mb-3 font-mono text-xs text-on-surface-variant">Buscando tu ubicación…</p>
           ) : (
-            spot.offM > 50 &&
-            spot.offM > spot.accuracy && (
+            spotOffM > 0 && (
               <p className="mb-3 flex gap-2 rounded-xl bg-secondary-fixed/50 p-2.5 text-sm text-on-secondary-container">
                 <TriangleAlert className="size-4 shrink-0 text-secondary" aria-hidden />
-                Estás a {metersLabel(spot.offM)} del sendero: se marca el punto más cercano del trazo.
+                {tooFar
+                  ? `Estás a ${metersLabel(spotOffM)} del sendero. Acércate para reportar.`
+                  : `Estás a ${metersLabel(spotOffM)} del sendero: se marca el punto más cercano del trazo.`}
               </p>
             )
           )}
@@ -912,7 +958,7 @@ function Viewer({ slug }: { slug: string }) {
           <button
             type="button"
             onClick={report}
-            disabled={!spot || !mark || (mark === "comentario" && !note.trim())}
+            disabled={!spot || tooFar || !mark || (mark === "comentario" && !note.trim())}
             className="mt-2 w-full rounded-2xl bg-primary py-3 font-headline font-bold text-on-primary disabled:opacity-40"
           >
             Guardar
