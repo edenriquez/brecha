@@ -2,7 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { requireUser } from "@/lib/auth.server";
-import { NOTE_MAX, NOTICE, TRACTION, type AnnotationKind, type RouteAnnotation } from "@/lib/annotations";
+import { ANSWERABLE, NOTE_MAX, NOTICE, TRACTION, type AnnotationKind, type RouteAnnotation } from "@/lib/annotations";
 
 export type AnnotationResult = { error: string | null };
 export type AnnotationInput = Pick<RouteAnnotation, "kind" | "traction" | "km" | "lng" | "lat" | "note"> & { id?: string };
@@ -55,6 +55,21 @@ export async function deleteAnnotation(route: Target, id: string): Promise<Annot
     return { error: "No pudimos borrar la anotación. Intenta de nuevo." };
   }
   if (!data.length) return { error: "Solo quien subió la ruta puede borrar sus anotaciones." };
+  revalidate(route.slug);
+  return { error: null };
+}
+
+/** Vuelve a mostrar un aviso oculto: cualquier update sube su `updated_at` y las respuestas anteriores dejan de contar. */
+export async function reactivateAnnotation(route: Target, id: string, kind: AnnotationKind): Promise<AnnotationResult> {
+  const { supabase } = await requireUser(`/rutas/${route.slug}/anotaciones`);
+  if (!ANSWERABLE.includes(kind)) return { error: "Ese aviso no se oculta." };
+  // el mismo tipo en el set y en el filtro: no cambia ningún valor
+  const { data, error } = await supabase.from("route_annotations").update({ kind }).eq("id", id).eq("route_id", route.id).eq("kind", kind).select("id");
+  if (error) {
+    console.error("reactivateAnnotation:", error.message);
+    return { error: "No pudimos reactivar el aviso. Intenta de nuevo." };
+  }
+  if (!data.length) return { error: "Solo quien subió la ruta puede reactivar sus avisos." };
   revalidate(route.slug);
   return { error: null };
 }

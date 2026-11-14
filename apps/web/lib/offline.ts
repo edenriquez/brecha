@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useSyncExternalStore } from "react";
-import { ANNOTATION_COLUMNS, type RouteAnnotation } from "@/lib/annotations";
+import { ANNOTATION_COLUMNS, visible, type RouteAnnotation } from "@/lib/annotations";
 import type { ProfilePoint } from "@/lib/gpx";
 import { cellsAreaKm2, zoneCells, zoneTiles, type Tile } from "@/lib/hex-grid";
 import { DEM_TILES, MAP_STYLE, SATELLITE_TILES } from "@/lib/map-sources";
@@ -91,9 +91,10 @@ export type OfflineRoute = OfflineRouteInfo & {
   layers?: boolean;
   /** Tracción y avisos de quien subió la ruta; los registros anteriores no los traen */
   annotations?: RouteAnnotation[];
-  /** Id de la ruta en la base y si la sesión puede anotarla (la subió o modera), leídos con señal junto a las anotaciones */
+  /** Id de la ruta en la base, si hay sesión y si puede anotarla (la subió o modera), leídos con señal junto a las anotaciones */
   routeId?: string;
   canAnnotate?: boolean;
+  signedIn?: boolean;
 };
 
 /** El visor sin conexión no deja alejarse ni acercarse más allá de lo descargado. */
@@ -351,7 +352,7 @@ async function saveRecord(record: OfflineRoute) {
   await (await routesCache()).put(ROUTE_KEY + encodeURIComponent(record.slug), new Response(JSON.stringify(record), { headers: { "Content-Type": "application/json" } }));
 }
 
-type RouteNotes = Required<Pick<OfflineRoute, "annotations" | "canAnnotate">> & Pick<OfflineRoute, "routeId">;
+type RouteNotes = Required<Pick<OfflineRoute, "annotations" | "canAnnotate" | "signedIn">> & Pick<OfflineRoute, "routeId">;
 
 /**
  * Anotaciones de la ruta, con la sesión del navegador (quien la subió sin publicar también ve las suyas), y si esa
@@ -375,7 +376,8 @@ async function fetchAnnotations(slug: string, signal: AbortSignal): Promise<Rout
     if (admin.error) throw new Error(`is_admin: ${admin.error.message}`);
     canAnnotate = admin.data === true;
   }
-  return { annotations: data as RouteAnnotation[], routeId: route?.id, canAnnotate };
+  // los avisos ocultos (ya no están) no se guardan en el teléfono
+  return { annotations: visible(data as RouteAnnotation[]), routeId: route?.id, canAnnotate, signedIn: !!uid };
 }
 
 /** Vuelve a pedir las anotaciones de una ruta guardada y reescribe su registro; null si no se pudo (sin señal, sin registro). */

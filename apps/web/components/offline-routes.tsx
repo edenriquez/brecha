@@ -4,13 +4,13 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useSearchParams } from "next/navigation";
 import clsx from "clsx";
-import { ArrowLeft, ArrowUp, Check, ChevronDown, ChevronUp, Clock, CloudDownload, CloudOff, Hexagon, Info, Layers, LocateFixed, MessageSquarePlus, Mountain, Navigation, Play, Smartphone, Trash2, TriangleAlert, Undo2, WifiOff, X } from "lucide-react";
+import { ArrowLeft, ArrowUp, Check, ChevronDown, ChevronUp, Clock, CloudDownload, CloudOff, Hexagon, Info, Layers, LocateFixed, MessageSquarePlus, Mountain, Navigation, Play, Smartphone, ThumbsDown, ThumbsUp, Trash2, TriangleAlert, Undo2, WifiOff, X } from "lucide-react";
 import { ElevationProfile } from "@/components/elevation-profile";
 import { LayerSheet, loadLayers, overlaySaved, REGIONAL, saveLayers, savedOptions, useOnline, type MapLayers, type Overlay } from "@/components/layer-sheet";
 // sin next/dynamic: así sus scripts vienen en el HTML que guarda el service worker y el mapa abre sin red
 import { routeCloses, TrackMap } from "@/components/track-map";
-import { discardAnnotation, enqueueAnnotation, flushAnnotations, forgetUploaded, retryAnnotation, usePendingAnnotations } from "@/lib/annotation-queue";
-import { kmLabel, NOTE_MAX, NOTICE, TRACTION, upcoming, type NoticeKind, type RouteAnnotation, type Traction } from "@/lib/annotations";
+import { answerAnnotation, discardAnnotation, enqueueAnnotation, flushAnnotations, forgetUploaded, retryAnnotation, usePendingAnnotations } from "@/lib/annotation-queue";
+import { ANSWERABLE, confirmedLabel, kmLabel, NOTE_MAX, NOTICE, TRACTION, upcoming, type NoticeKind, type RouteAnnotation, type Traction } from "@/lib/annotations";
 import { daysAgoLabel } from "@/lib/community";
 import { coverageGeoJson, setCoverage } from "@/lib/coverage-layer";
 import { setLidar, setWaterfalls } from "@/lib/lidar-layer";
@@ -323,13 +323,12 @@ function Viewer({ slug }: { slug: string }) {
       forgetUploaded(slug, notes.annotations.map((a) => a.id));
       setRoute((r) => r && { ...r, ...notes });
     });
-  const pending = usePendingAnnotations(slug, () => refresh(new AbortController().signal));
+  const [pending, waiting] = usePendingAnnotations(slug, () => refresh(new AbortController().signal));
   const routeAnnotations = route?.annotations;
   const annotations = useMemo(() => {
     const extra = pending.filter((p) => !routeAnnotations?.some((a) => a.id === p.id));
     return extra.length ? [...(routeAnnotations ?? []), ...extra] : routeAnnotations;
   }, [routeAnnotations, pending]);
-  const waiting = pending.filter((p) => !p.error && !p.done).length;
   // con señal débil el navegador no avisa "online": mientras haya algo por subir se reintenta cada minuto
   useEffect(() => {
     if (!waiting) return;
@@ -449,22 +448,32 @@ function Viewer({ slug }: { slug: string }) {
   const pin = picked ? annotations?.find((a) => a.id === picked.id) : undefined;
   const shown = pin ?? near;
   const dismiss = (id: string) => setSeen((s) => new Set(s).add(id));
-  let card: { key: string; title: string; note: string | null; meta: string; color: string; badge: ReactNode; close: () => void; drain?: boolean } | null = null;
+  // `answer`: la tarjeta pregunta "¿Sigue ahí?" en lugar de "Entendido"
+  let card: { key: string; title: string; note: string | null; meta: string; color: string; badge: ReactNode; close: () => void; drain?: boolean; answer?: (stillThere: boolean) => void } | null = null;
   if (shown) {
     const kind = NOTICE[shown.kind as NoticeKind];
     const m = next?.notice ? Math.round(next.notice.m / 10) * 10 : 0;
+    const close = () => {
+      setPicked(null);
+      // cerrar un pin leído de lejos no cuenta como avisado: al acercarte sale su aviso
+      if (shown.id === near?.id) dismiss(shown.id);
+    };
     card = {
       key: shown.id,
       title: pin ? `${kind.label} · ${kmLabel(pin.km)}` : m < 30 ? `${kind.label} aquí` : `${kind.label} a ${m} m`,
       note: shown.note,
-      meta: pin ? updatedLabel(pin) : `${kmLabel(shown.km)} · ${updatedLabel(shown)}`,
+      meta: (pin ? updatedLabel(pin) : `${kmLabel(shown.km)} · ${updatedLabel(shown)}`) + (shown.confirmed ? ` · ${confirmedLabel(shown.confirmed)}` : ""),
       color: kind.color,
       badge: <kind.icon className="size-5" aria-hidden />,
-      close: () => {
-        setPicked(null);
-        // cerrar un pin leído de lejos no cuenta como avisado: al acercarte sale su aviso
-        if (shown.id === near?.id) dismiss(shown.id);
-      },
+      close,
+      // se contesta estando ahí (no en el pin tocado), con sesión y si el aviso ya está en el servidor; contestar lo da por visto
+      answer:
+        !pin && route.signedIn && ANSWERABLE.includes(shown.kind) && !shown.id.startsWith("pendiente-")
+          ? (stillThere) => {
+              answerAnnotation({ slug, annotationId: shown.id, stillThere });
+              close();
+            }
+          : undefined,
     };
   } else if (next?.traction) {
     const { segment, leftKm } = next.traction;
@@ -582,19 +591,34 @@ function Viewer({ slug }: { slug: string }) {
                 {card.note && <p className="text-sm">{card.note}</p>}
                 <div className="mt-1 flex items-center justify-between gap-2">
                   <p className="font-mono text-[11px] text-on-surface-variant uppercase">{card.meta}</p>
-                  {!pin && (
+                  {!pin && !card.answer && (
                     <button type="button" onClick={card.close} className="shrink-0 rounded-full border border-outline-variant px-3 py-1.5 font-headline text-sm font-semibold hover:bg-surface-container">
                       Entendido
                     </button>
                   )}
                 </div>
               </div>
-              {pin && (
+              {(pin || card.answer) && (
                 <button type="button" onClick={card.close} aria-label="Cerrar" className="-m-1 rounded-full p-2 text-on-surface-variant hover:bg-surface-container">
                   <X className="size-4" aria-hidden />
                 </button>
               )}
             </div>
+            {card.answer && (
+              <div className="mx-3 border-t border-outline-variant/60 py-3">
+                <p className="mb-2 font-headline text-sm font-bold">¿Sigue ahí?</p>
+                <div className="grid grid-cols-2 gap-2">
+                  <button type="button" onClick={() => card.answer!(true)} className="flex items-center justify-center gap-2 rounded-xl bg-primary px-3 py-2.5 font-headline text-sm font-semibold text-on-primary hover:bg-primary-container">
+                    <ThumbsUp className="size-4" aria-hidden />
+                    Sigue ahí
+                  </button>
+                  <button type="button" onClick={() => card.answer!(false)} className="flex items-center justify-center gap-2 rounded-xl border border-outline-variant px-3 py-2.5 font-headline text-sm font-semibold hover:bg-surface-container">
+                    <ThumbsDown className="size-4" aria-hidden />
+                    Ya no está
+                  </button>
+                </div>
+              </div>
+            )}
             {/* el cambio de tracción se cierra solo cuando la barra se consume (10 s) */}
             {card.drain && <div className="h-1 origin-left" style={{ background: card.color, animation: "drain 10s linear forwards" }} onAnimationEnd={card.close} />}
           </div>
