@@ -3,7 +3,7 @@
 import { useActionState, useState } from "react";
 import { keepValues } from "@/lib/forms";
 import Link from "next/link";
-import { Flag, PencilLine, Send } from "lucide-react";
+import { Flag, MapPinned, PencilLine, Send } from "lucide-react";
 import { suggestCorrection, type SuggestionState } from "@/app/rutas/actions";
 import { useSessionUser } from "@/lib/use-session-user";
 
@@ -18,9 +18,14 @@ export function RouteFeedback({ route }: { route: { id: string; slug: string; cr
   if (user === undefined) return null;
   if (user && user.id === route.created_by) {
     return (
-      <Link href={`/rutas/${route.slug}/editar`} className={LINK}>
-        <PencilLine className="size-3.5" aria-hidden /> Editar esta ruta
-      </Link>
+      <div className="flex flex-wrap gap-x-5 gap-y-2">
+        <Link href={`/rutas/${route.slug}/editar`} className={LINK}>
+          <PencilLine className="size-3.5" aria-hidden /> Editar esta ruta
+        </Link>
+        <Link href={`/rutas/${route.slug}/anotaciones`} className={LINK}>
+          <MapPinned className="size-3.5" aria-hidden /> Anotar la ruta
+        </Link>
+      </div>
     );
   }
   if (state.sent) return <p className="text-[13px] text-on-surface-variant">Gracias por avisar: la moderación revisará tu corrección.</p>;

@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { ArrowLeft, MessageSquareWarning, PencilLine } from "lucide-react";
+import { ArrowLeft, MapPinned, MessageSquareWarning, PencilLine } from "lucide-react";
 import { RouteForm } from "@/components/route-form";
 import { TopNav } from "@/components/top-nav";
 import { requireUser } from "@/lib/auth.server";
@@ -34,6 +34,12 @@ export default async function EditRoutePage({ params }: Props) {
             {ROUTE_STATUS[route.status].label}
           </p>
           <h1 className="font-headline text-3xl font-extrabold tracking-tight sm:text-4xl">Editar {route.fields.name}</h1>
+          {shape && (
+            <Link href={`/rutas/${route.slug}/anotaciones`} className="mt-3 inline-flex items-center gap-1.5 text-sm font-semibold text-primary hover:underline">
+              <MapPinned className="size-4" aria-hidden />
+              Anotar tracción y avisos en el trazo
+            </Link>
+          )}
         </div>
         {route.status === "rechazada" && route.review_note && (
           <div role="status" className="mb-6 flex items-start gap-3 rounded-xl border border-error/30 bg-error/5 p-4">

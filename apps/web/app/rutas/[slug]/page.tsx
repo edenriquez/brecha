@@ -13,13 +13,15 @@ import { RouteFeedback } from "@/components/route-feedback";
 import { RouteTrack } from "@/components/route-track";
 import { ShareButton } from "@/components/share-button";
 import { TrailConditions } from "@/components/trail-conditions";
+import { kmLabel, NOTICE, notices, TRACTION, tractionSegments, UNMARKED, type RouteAnnotation } from "@/lib/annotations";
+import { daysAgoLabel } from "@/lib/community";
 import { mapHref } from "@/lib/route-filters";
 import { ACTIVITY, DIFFICULTY, formatDuration, formatKm, ROUTE_TYPE } from "@/lib/routes";
-import { outingDateParts, spotsLabel, type OutingSummary } from "@/lib/outings";
+import { outingDateParts, spotsLabel, type OutingSummary, type Person } from "@/lib/outings";
 import { listUpcomingOutings } from "@/lib/outings.server";
 import { personName, profileHref } from "@/lib/profiles";
 import { getProfile } from "@/lib/profiles.server";
-import { getRoute, getRouteCommunity, getRouteShape } from "@/lib/routes.server";
+import { getRoute, getRouteAnnotations, getRouteCommunity, getRouteShape } from "@/lib/routes.server";
 import { createAnonClient } from "@/lib/supabase/server";
 
 export const revalidate = 300;
@@ -45,11 +47,12 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
 export default async function RoutePage({ params }: Props) {
   const route = await getRoute((await params).slug);
   if (!route) notFound();
-  const [outings, shape, community, uploader] = await Promise.all([
+  const [outings, shape, community, uploader, annotations] = await Promise.all([
     listUpcomingOutings(route.id),
     getRouteShape(createAnonClient(), route.slug),
     getRouteCommunity(route.id),
     route.created_by ? getProfile(route.created_by) : null,
+    getRouteAnnotations(createAnonClient(), route.id),
   ]);
   const difficulty = DIFFICULTY[route.difficulty];
   const target = { id: route.id, slug: route.slug };
@@ -148,7 +151,7 @@ export default async function RoutePage({ params }: Props) {
             <p className="text-[13px] text-on-surface-variant">{shape ? "Recorre el perfil para ubicar cada punto en el mapa" : "Esta ruta todavía no tiene trazo GPX"}</p>
           </div>
           {shape ? (
-            <RouteTrack line={shape.line} profile={shape.profile} mapHref={mapHref(route)} />
+            <RouteTrack line={shape.line} profile={shape.profile} mapHref={mapHref(route)} annotations={annotations} />
           ) : (
             <div className="relative h-80 overflow-hidden rounded-2xl border border-outline-variant/60 bg-[#e3e8e1] sm:h-96">
               <StartPointMap lat={route.lat} lng={route.lng} openHref={mapHref(route)} />
@@ -157,6 +160,8 @@ export default async function RoutePage({ params }: Props) {
         </section>
       }
     >
+      {annotations.length > 0 && <AuthorNotes annotations={annotations} totalKm={route.distance_km} author={uploader} />}
+
       {(route.description || route.tags.length > 0) && (
         <section>
           <h2 className="font-headline text-lg font-bold">Sobre la ruta</h2>
@@ -181,6 +186,75 @@ export default async function RoutePage({ params }: Props) {
 
       <RouteFeedback route={{ id: route.id, slug: route.slug, created_by: route.created_by }} />
     </DetailLayout>
+  );
+}
+
+function AuthorNotes({ annotations, totalKm, author }: { annotations: RouteAnnotation[]; totalKm: number; author: Person | null }) {
+  const updated = annotations.reduce((last, a) => (a.updated_at > last ? a.updated_at : last), annotations[0].updated_at);
+  const day = new Date(updated).toLocaleDateString("en-CA", { timeZone: "America/Mexico_City" });
+  const segments = tractionSegments(annotations, totalKm);
+  const byLevel = [...(Object.keys(TRACTION) as (keyof typeof TRACTION)[]), null]
+    .map((t) => ({ ...(t ? TRACTION[t] : UNMARKED), km: segments.filter((s) => s.traction === t).reduce((sum, s) => sum + s.to - s.from, 0) }))
+    .filter((l) => l.km > 0);
+  const list = notices(annotations);
+
+  return (
+    <section className="space-y-4">
+      <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-1">
+        <h2 className="font-headline text-lg font-bold">Notas del autor</h2>
+        <p className="flex items-center gap-1.5 text-xs text-on-surface-variant">
+          {author && <Avatar person={author} size={20} className="border-0" />}
+          {author ? `${personName(author)} · ` : ""}actualizado {daysAgoLabel(day)}
+        </p>
+      </div>
+      {annotations.some((a) => a.kind === "traccion") && (
+        <div className="rounded-xl border border-outline-variant/60 bg-surface-container-lowest p-4">
+          <div className="flex flex-wrap items-baseline justify-between gap-2">
+            <h3 className="font-headline text-sm font-bold">Tracción requerida</h3>
+            <p className="font-mono text-[11px] text-outline">Distancia total {formatKm(totalKm)}</p>
+          </div>
+          <div className="mt-3 flex h-2.5 overflow-hidden rounded-full" aria-hidden>
+            {byLevel.map((l) => (
+              <span key={l.label} style={{ width: `${(l.km / totalKm) * 100}%`, background: l.color }} />
+            ))}
+          </div>
+          <dl className="mt-3 flex flex-wrap gap-x-6 gap-y-2">
+            {byLevel.map((l) => (
+              <div key={l.label}>
+                <dt className="flex items-center gap-1.5 text-xs text-on-surface-variant">
+                  <span className="size-2 rounded-full" style={{ background: l.color }} aria-hidden />
+                  {l.label}
+                </dt>
+                <dd className="font-mono text-xs font-bold">{formatKm(l.km)}</dd>
+              </div>
+            ))}
+          </dl>
+        </div>
+      )}
+      {list.length > 0 && (
+        <ol className="divide-y divide-outline-variant/40 rounded-xl border border-outline-variant/60 bg-surface-container-lowest">
+          {list.map((a, i) => {
+            const kind = NOTICE[a.kind as keyof typeof NOTICE];
+            const Icon = kind.icon;
+            return (
+              <li key={a.id} className="flex items-start gap-3 p-4">
+                <span className="flex size-7 shrink-0 items-center justify-center rounded-full font-headline text-xs font-bold text-white" style={{ background: kind.color }}>
+                  {i + 1}
+                </span>
+                <div className="min-w-0 flex-1">
+                  <p className="flex items-center gap-1.5 font-headline text-sm font-bold">
+                    <Icon className="size-4" style={{ color: kind.color }} aria-hidden />
+                    {kind.label}
+                  </p>
+                  {a.note && <p className="mt-0.5 text-sm text-on-surface-variant">{a.note}</p>}
+                </div>
+                <span className="shrink-0 rounded-md border border-outline-variant/60 bg-surface-container-low px-2 py-1 font-mono text-[11px] font-semibold">{kmLabel(a.km)}</span>
+              </li>
+            );
+          })}
+        </ol>
+      )}
+    </section>
   );
 }
 
