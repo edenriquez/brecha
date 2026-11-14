@@ -3,6 +3,7 @@
 import { useId, useMemo, useRef, type KeyboardEvent, type PointerEvent } from "react";
 import clsx from "clsx";
 import type { ProfilePoint } from "@/lib/gpx";
+import { notices, NOTICE, TRACTION, tractionSegments, UNMARKED, type RouteAnnotation } from "@/lib/annotations";
 
 const W = 1000;
 const H = 200;
@@ -23,6 +24,8 @@ export function ElevationProfile({
   onActive,
   overlay,
   position,
+  annotations,
+  onPick,
 }: {
   profile: ProfilePoint[];
   active: number | null;
@@ -31,6 +34,10 @@ export function ElevationProfile({
   overlay?: boolean;
   /** Índice donde va el GPS: punto azul con línea punteada y la etiqueta "Posición actual" */
   position?: number | null;
+  /** Banda de tracción bajo la gráfica y avisos numerados sobre la curva */
+  annotations?: RouteAnnotation[];
+  /** Un clic elige ese punto del perfil (editor de anotaciones) */
+  onPick?: (point: ProfilePoint) => void;
 }) {
   const gradient = useId();
   const box = useRef<HTMLDivElement>(null);
@@ -107,6 +114,7 @@ export function ElevationProfile({
           onPointerLeave={(e: PointerEvent) => !overlay && e.pointerType === "mouse" && onActive(null)}
           onKeyDown={onKeyDown}
           onBlur={() => !overlay && onActive(null)}
+          onClick={(e) => onPick?.(profile[indexAt(e.clientX)])}
           className={clsx(
             "relative rounded-lg outline-none focus-visible:ring-2 focus-visible:ring-primary/40",
             // arriba queda el hueco para la etiqueta de la posición
@@ -157,7 +165,33 @@ export function ElevationProfile({
               </div>
             </>
           )}
+          {annotations &&
+            notices(annotations).map((a, i) => {
+              const kind = NOTICE[a.kind as keyof typeof NOTICE];
+              const near = profile.reduce((b, p) => (Math.abs(p[0] - a.km) < Math.abs(b[0] - a.km) ? p : b));
+              return (
+                <div
+                  key={a.id}
+                  title={`${i + 1}. ${kind.label}`}
+                  className="pointer-events-none absolute flex size-5 -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-full border-2 border-white font-headline text-[10px] font-bold text-white shadow"
+                  style={{ left: pct(chart.x(a.km), W), top: pct(chart.y(near[1]), H), background: kind.color }}
+                >
+                  {i + 1}
+                </div>
+              );
+            })}
         </div>
+        {annotations?.some((a) => a.kind === "traccion") && (
+          <div className="relative mt-1.5 h-1.5 overflow-hidden rounded-full" aria-hidden>
+            {tractionSegments(annotations, total).map((t) => (
+              <span
+                key={t.from}
+                className="absolute inset-y-0"
+                style={{ left: pct(t.from, total), width: pct(t.to - t.from, total), background: t.traction ? TRACTION[t.traction].color : UNMARKED.color }}
+              />
+            ))}
+          </div>
+        )}
         <div className="relative mt-1 h-4 font-mono text-[10px] text-outline" aria-hidden>
           <span className="absolute left-0">0 km</span>
           {reading ? (

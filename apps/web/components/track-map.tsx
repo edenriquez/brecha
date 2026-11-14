@@ -3,7 +3,8 @@
 import { useEffect, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { OpenMapLink } from "@/components/open-map-link";
-import { addHillshade, addTopoLayers, collapseAttribution, lineBounds, MAP_STYLE, maplibregl, setTerrain3d, setTrack, setTrackDone, TERRAIN_3D_PITCH, type LineCoords } from "@/lib/maplibre";
+import { lineKm, notices, NOTICE, sliceLine, TRACTION, tractionSegments, type RouteAnnotation } from "@/lib/annotations";
+import { addHillshade, addTopoLayers, collapseAttribution, lineBounds, MAP_STYLE, maplibregl, setTerrain3d, setTrack, setTrackDone, setTraction, TERRAIN_3D_PITCH, type LineCoords } from "@/lib/maplibre";
 import { OFFLINE_ZOOM, offlineBounds } from "@/lib/offline";
 
 const LABEL = "flex items-center gap-2 rounded-full border border-outline-variant/80 bg-surface-container-lowest/95 px-2.5 py-1.5 shadow-md";
@@ -13,6 +14,38 @@ function labelMarker(text: string, dot: string) {
   el.className = LABEL;
   el.innerHTML = `<span class="size-3 rounded-full border-2 border-white ${dot}"></span><span class="font-headline text-xs font-bold">${text}</span>`;
   return el;
+}
+
+/** Pin redondo con el número del aviso, o etiqueta "4H"/"4L" a media altura de su tramo. */
+function badge(text: string, color: string, title: string, round: boolean) {
+  const el = document.createElement("div");
+  el.className = round
+    ? "flex size-6 items-center justify-center rounded-full border-2 border-white font-headline text-[11px] font-bold text-white shadow-md"
+    : "rounded-md border-2 border-white px-1 font-mono text-[10px] leading-4 font-bold text-white shadow-md";
+  el.style.background = color;
+  el.title = title;
+  el.textContent = text;
+  return el;
+}
+
+/** Tracción pintada sobre el trazo y avisos numerados; devuelve los marcadores para quitarlos al redibujar. */
+function drawAnnotations(map: maplibregl.Map, line: LineCoords, annotations: RouteAnnotation[]) {
+  const km = lineKm(line);
+  const segments = tractionSegments(annotations, km[km.length - 1]).filter((s) => s.traction && s.to > s.from);
+  setTraction(map, segments.map((s) => ({ line: sliceLine(line, km, s.from, s.to), color: TRACTION[s.traction!].color })));
+  const markers = segments
+    .filter((s) => s.traction !== "normal")
+    .map((s) => {
+      const t = TRACTION[s.traction!];
+      const mid = sliceLine(line, km, (s.from + s.to) / 2, (s.from + s.to) / 2)[0];
+      return new maplibregl.Marker({ element: badge(t.label, t.color, `Tracción ${t.label}`, false) }).setLngLat(mid);
+    });
+  notices(annotations).forEach((a, i) => {
+    const kind = NOTICE[a.kind as keyof typeof NOTICE];
+    markers.push(new maplibregl.Marker({ element: badge(String(i + 1), kind.color, `${i + 1}. ${kind.label}`, true) }).setLngLat([a.lng, a.lat]));
+  });
+  markers.forEach((m) => m.addTo(map));
+  return markers;
 }
 
 /** Inicio y fin a menos de 200 m: la ruta cierra. */
@@ -28,6 +61,7 @@ export function routeCloses(line: LineCoords) {
  * `onReady`: el mapa ya cargado y cómo prender o apagar el GPS (solo `offline`, que no muestra controles propios).
  * `onTracking`: si el GPS sigue tu ubicación.
  * `done`: el tramo ya recorrido, en azul sobre el trazo.
+ * `annotations`: tracción por tramos y avisos de quien subió la ruta. `onPick`: un clic en el mapa elige ese punto (editor de anotaciones).
  */
 export function TrackMap({
   line,
@@ -40,6 +74,8 @@ export function TrackMap({
   onReady,
   onTracking,
   done = null,
+  annotations,
+  onPick,
 }: {
   line: LineCoords;
   hover: [number, number] | null;
@@ -51,6 +87,8 @@ export function TrackMap({
   onReady?: (ready: { map: maplibregl.Map; locate: () => void } | null) => void;
   onTracking?: (on: boolean) => void;
   done?: LineCoords | null;
+  annotations?: RouteAnnotation[];
+  onPick?: (lngLat: [number, number]) => void;
 }) {
   const router = useRouter();
   const container = useRef<HTMLDivElement>(null);
@@ -59,6 +97,12 @@ export function TrackMap({
   const hoverMarker = useRef<maplibregl.Marker | null>(null);
   const terrain3dRef = useRef(terrain3d);
   const doneRef = useRef(done);
+  const annotationsRef = useRef(annotations);
+  const annotationMarkers = useRef<maplibregl.Marker[]>([]);
+  const onPickRef = useRef(onPick);
+  useEffect(() => {
+    onPickRef.current = onPick;
+  }, [onPick]);
   const openHrefRef = useRef(openHref);
   useEffect(() => {
     openHrefRef.current = openHref;
@@ -91,10 +135,12 @@ export function TrackMap({
     if (offline) map.addControl(new maplibregl.AttributionControl({ compact: true }), "top-right");
     else map.addControl(new maplibregl.NavigationControl({ showCompass: false }), "bottom-right");
     // maplibre solo emite click si no hubo arrastre: mover el mapa no navega
-    map.on("click", () => {
-      if (openHrefRef.current) router.push(openHrefRef.current);
+    map.on("click", (e) => {
+      if (onPickRef.current) onPickRef.current([e.lngLat.lng, e.lngLat.lat]);
+      else if (openHrefRef.current) router.push(openHrefRef.current);
     });
-    if (openHrefRef.current) map.getCanvas().style.cursor = "pointer";
+    if (onPickRef.current) map.getCanvas().style.cursor = "crosshair";
+    else if (openHrefRef.current) map.getCanvas().style.cursor = "pointer";
     let geolocate: maplibregl.GeolocateControl | undefined;
     if (offline) {
       geolocate = new maplibregl.GeolocateControl({ positionOptions: { enableHighAccuracy: true }, trackUserLocation: true, fitBoundsOptions: { maxZoom: 15 } });
@@ -113,6 +159,7 @@ export function TrackMap({
       addTopoLayers(map, offline);
       setTrack(map, line);
       setTrackDone(map, doneRef.current ?? []);
+      if (annotationsRef.current) annotationMarkers.current = drawAnnotations(map, line, annotationsRef.current);
       setTerrain3d(map, terrain3dRef.current);
       if (terrain3dRef.current) map.easeTo({ pitch: TERRAIN_3D_PITCH, duration: 1000 });
       collapseAttribution(map);
@@ -158,6 +205,14 @@ export function TrackMap({
     const map = mapRef.current;
     if (map && styleLoaded.current) setTrackDone(map, done ?? []);
   }, [done]);
+
+  useEffect(() => {
+    annotationsRef.current = annotations;
+    const map = mapRef.current;
+    if (!map || !styleLoaded.current) return;
+    annotationMarkers.current.forEach((m) => m.remove());
+    annotationMarkers.current = annotations ? drawAnnotations(map, line, annotations) : [];
+  }, [annotations, line]);
 
   // solo cambia el texto: recrear el mapa perdería la vista
   useEffect(() => {

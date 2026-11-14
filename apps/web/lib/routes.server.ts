@@ -2,6 +2,7 @@ import "server-only";
 import { cache } from "react";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { LineString } from "geojson";
+import { ANNOTATION_COLUMNS, type RouteAnnotation } from "@/lib/annotations";
 import { RECENT_REPORT_DAYS, shiftDay, type RoutePhoto, type TrailReport } from "@/lib/community";
 import { todayInMexicoCity } from "@/lib/outings";
 import { PERSON_COLUMNS } from "@/lib/profiles";
@@ -90,4 +91,11 @@ export async function getRouteShape(supabase: SupabaseClient, slug: string): Pro
     profile: row.elevation_profile,
     gpxUrl: row.gpx_path ? supabase.storage.from("route-tracks").getPublicUrl(row.gpx_path, { download: `${slug}.gpx` }).data.publicUrl : null,
   };
+}
+
+/** Anotaciones de quien subió la ruta, por km; el RLS solo deja ver las de rutas que el cliente puede ver. */
+export async function getRouteAnnotations(supabase: SupabaseClient, routeId: string): Promise<RouteAnnotation[]> {
+  const { data, error } = await supabase.from("route_annotations").select(ANNOTATION_COLUMNS).eq("route_id", routeId).order("km").limit(200);
+  if (error) throw new Error(`route_annotations ${routeId}: ${error.message}`);
+  return data as RouteAnnotation[];
 }

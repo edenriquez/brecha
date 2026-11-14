@@ -187,6 +187,10 @@ export function setTrack(map: maplibregl.Map, line: LineCoords) {
   const width = ["interpolate", ["linear"], ["zoom"], 10, 2, 15, 5] as maplibregl.ExpressionSpecification;
   map.addLayer({ id: "track-casing", type: "line", source: "track", layout, paint: { "line-color": "#a53c00", "line-width": ["interpolate", ["linear"], ["zoom"], 10, 4, 15, 8] } }, firstLabel);
   map.addLayer({ id: "track-line", type: "line", source: "track", layout, paint: { "line-color": "#ff7a3d", "line-width": width } }, firstLabel);
+  // tramos por tracción con borde blanco; los llena setTraction
+  map.addSource("track-traction", { type: "geojson", data: { type: "FeatureCollection", features: [] } });
+  map.addLayer({ id: "track-traction-casing", type: "line", source: "track-traction", layout, paint: { "line-color": "#ffffff", "line-width": ["interpolate", ["linear"], ["zoom"], 10, 4, 15, 8] } }, firstLabel);
+  map.addLayer({ id: "track-traction", type: "line", source: "track-traction", layout, paint: { "line-color": ["get", "color"], "line-width": width } }, firstLabel);
   // el tramo recorrido, del azul de tu ubicación; lo llena setTrackDone
   map.addSource("track-done", { type: "geojson", data: lineData([]) });
   map.addLayer({ id: "track-done", type: "line", source: "track-done", layout, paint: { "line-color": "#1da1f2", "line-width": width } }, firstLabel);
@@ -195,6 +199,14 @@ export function setTrack(map: maplibregl.Map, line: LineCoords) {
 /** Tramo ya recorrido encima del trazo; con `line` vacío se borra. Va después de setTrack. */
 export function setTrackDone(map: maplibregl.Map, line: LineCoords) {
   map.getSource<maplibregl.GeoJSONSource>("track-done")?.setData(lineData(line));
+}
+
+/** Tramos de color sobre el trazo; con `segments` vacío se borra. Va después de setTrack. */
+export function setTraction(map: maplibregl.Map, segments: { line: LineCoords; color: string }[]) {
+  map.getSource<maplibregl.GeoJSONSource>("track-traction")?.setData({
+    type: "FeatureCollection",
+    features: segments.map((s) => ({ type: "Feature", properties: { color: s.color }, geometry: { type: "LineString", coordinates: s.line } })),
+  });
 }
 
 export function lineBounds(line: LineCoords) {
