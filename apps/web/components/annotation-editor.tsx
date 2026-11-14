@@ -236,9 +236,7 @@ export function AnnotationEditor({
                         </span>
                       </td>
                       <td className="py-2 text-right font-mono">{a.km.toFixed(1)}</td>
-                      <td className="max-w-40 truncate py-2 pl-3 text-on-surface-variant" title={a.note ?? undefined}>
-                        {a.note}
-                      </td>
+                      <td className="py-2 pl-3 break-words text-on-surface-variant">{a.note}</td>
                       <td className="py-1">{actions(a.id)}</td>
                     </tr>
                   );
