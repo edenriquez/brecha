@@ -4,12 +4,13 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useSearchParams } from "next/navigation";
 import clsx from "clsx";
-import { ArrowLeft, ArrowUp, Check, ChevronDown, ChevronUp, Clock, CloudDownload, Hexagon, Layers, LocateFixed, Mountain, Navigation, Play, Smartphone, Trash2, TriangleAlert, Undo2, WifiOff, X } from "lucide-react";
+import { ArrowLeft, ArrowUp, Check, ChevronDown, ChevronUp, Clock, CloudDownload, CloudOff, Hexagon, Info, Layers, LocateFixed, MessageSquarePlus, Mountain, Navigation, Play, Smartphone, Trash2, TriangleAlert, Undo2, WifiOff, X } from "lucide-react";
 import { ElevationProfile } from "@/components/elevation-profile";
 import { LayerSheet, loadLayers, overlaySaved, REGIONAL, saveLayers, savedOptions, useOnline, type MapLayers, type Overlay } from "@/components/layer-sheet";
 // sin next/dynamic: así sus scripts vienen en el HTML que guarda el service worker y el mapa abre sin red
 import { routeCloses, TrackMap } from "@/components/track-map";
-import { kmLabel, NOTICE, TRACTION, upcoming, type NoticeKind, type RouteAnnotation } from "@/lib/annotations";
+import { discardAnnotation, enqueueAnnotation, flushAnnotations, forgetUploaded, retryAnnotation, usePendingAnnotations } from "@/lib/annotation-queue";
+import { kmLabel, NOTE_MAX, NOTICE, TRACTION, upcoming, type NoticeKind, type RouteAnnotation, type Traction } from "@/lib/annotations";
 import { daysAgoLabel } from "@/lib/community";
 import { coverageGeoJson, setCoverage } from "@/lib/coverage-layer";
 import { setLidar, setWaterfalls } from "@/lib/lidar-layer";
@@ -252,6 +253,8 @@ function List() {
 // capas regionales: se crean al prenderlas la primera vez
 const REGIONAL_LAYERS = { roads: setRoads, waterfalls: setWaterfalls, viewpoints: setViewpoints, camps: setCamps };
 const ROUND = "pointer-events-auto relative flex size-12 items-center justify-center rounded-full shadow-lg ring-1 ring-outline-variant/60";
+const SECTION = "mb-2 font-mono text-xs tracking-widest text-on-surface-variant uppercase";
+const metersLabel = (m: number) => (m < 1000 ? `${Math.round(m)} m` : formatKm(m / 1000));
 const updatedLabel = (a: RouteAnnotation) => `actualizado ${daysAgoLabel(new Date(a.updated_at).toLocaleDateString("en-CA", { timeZone: "America/Mexico_City" }))}`;
 
 function Viewer({ slug }: { slug: string }) {
@@ -259,8 +262,12 @@ function Viewer({ slug }: { slug: string }) {
   const [layers, setLayers] = useState(loadLayers);
   const [ready, setReady] = useState<{ map: maplibregl.Map; locate: () => void } | null>(null);
   const [tracking, setTracking] = useState(false);
-  // la hoja de capas y el panel de avance nunca a la vez
-  const [open, setOpen] = useState<"capas" | "avance" | null>(null);
+  // la hoja de capas, el panel de avance y la de reportar nunca a la vez
+  const [open, setOpen] = useState<"capas" | "avance" | "reportar" | null>(null);
+  // lo que se reporta: el punto del trazo donde estabas al abrir la hoja (se fija ahí) y qué se marca
+  const [spot, setSpot] = useState<{ km: number; lng: number; lat: number; offM: number; accuracy: number } | null>(null);
+  const [mark, setMark] = useState<Traction | NoticeKind | null>(null);
+  const [note, setNote] = useState("");
   // aviso de fuera del sendero reducido a su ícono; vuelve a salir completo si regresas al sendero y te sales otra vez
   const [offHidden, setOffHidden] = useState(false);
   // los `bounds` de capa.json si la ruta toca la zona de las capas regionales
@@ -277,7 +284,8 @@ function Viewer({ slug }: { slug: string }) {
   const [back, setBack] = useState(saved?.back ?? false);
   // por dónde iba el recorrido guardado: sin él, un ida y vuelta no sabe en cuál de las dos pasadas vas
   const resume = useRef(saved?.index ?? null);
-  const [progress, setProgress] = useState<(ReturnType<typeof trackProgress> & { accuracy: number; lngLat: [number, number] }) | null>(null);
+  // `stale`: el GPS se apagó después de esta lectura; sirve para el avance pero no para reportar
+  const [progress, setProgress] = useState<(ReturnType<typeof trackProgress> & { accuracy: number; lngLat: [number, number]; stale?: boolean }) | null>(null);
   const gps = useRef<{ lngLat: [number, number]; accuracy: number } | null>(null);
   // avisos y tramos ya avisados en este recorrido, y el pin tocado con el aviso próximo que había al tocarlo
   const [seen, setSeen] = useState(() => new Set<string>());
@@ -307,6 +315,27 @@ function Viewer({ slug }: { slug: string }) {
     return coverageGeoJson(route.cells, o.roads || o.waterfalls || o.viewpoints || o.lidar ? layerBounds : null);
   }, [route, layerBounds]);
   const finished = download?.status === "lista";
+  // lo que sigue en el teléfono se pinta junto a lo guardado; al subir algo se relee para cambiar los temporales por las filas
+  const refresh = (signal: AbortSignal) =>
+    refreshAnnotations(slug, signal).then((notes) => {
+      if (!notes) return;
+      // lo recién subido ya viene en la relectura: sale de la cola
+      forgetUploaded(slug, notes.annotations.map((a) => a.id));
+      setRoute((r) => r && { ...r, ...notes });
+    });
+  const pending = usePendingAnnotations(slug, () => refresh(new AbortController().signal));
+  const routeAnnotations = route?.annotations;
+  const annotations = useMemo(() => {
+    const extra = pending.filter((p) => !routeAnnotations?.some((a) => a.id === p.id));
+    return extra.length ? [...(routeAnnotations ?? []), ...extra] : routeAnnotations;
+  }, [routeAnnotations, pending]);
+  const waiting = pending.filter((p) => !p.error && !p.done).length;
+  // con señal débil el navegador no avisa "online": mientras haya algo por subir se reintenta cada minuto
+  useEffect(() => {
+    if (!waiting) return;
+    const timer = setInterval(flushAnnotations, 60_000);
+    return () => clearInterval(timer);
+  }, [waiting]);
 
   useEffect(() => {
     (offlineSupported() ? getOfflineRoute(slug) : Promise.resolve(null)).then(setRoute);
@@ -315,8 +344,10 @@ function Viewer({ slug }: { slug: string }) {
   // con señal se vuelven a pedir las anotaciones, sin esperar para pintar lo guardado; sin ella o si fallan, quedan las guardadas
   useEffect(() => {
     const controller = new AbortController();
-    if (offlineSupported()) refreshAnnotations(slug, controller.signal).then((annotations) => annotations && setRoute((r) => r && { ...r, annotations }));
+    if (offlineSupported()) void refresh(controller.signal);
+    void flushAnnotations();
     return () => controller.abort();
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- refresh es nueva en cada render; solo depende de slug
   }, [slug]);
 
   // al terminar una descarga se relee el registro (las capas nuevas pasan a "Descargado"); con el mismo trazo, el mapa no se rehace
@@ -402,7 +433,7 @@ function Viewer({ slug }: { slug: string }) {
   const going = startedAt ? progress : null;
   const offM = going && going.offM > 50 && going.offM > going.accuracy ? going.offM : null;
   if (offM === null && offHidden) setOffHidden(false);
-  const offText = offM === null ? "" : `Estás a ${offM < 1000 ? `${Math.round(offM)} m` : formatKm(offM / 1000)} del sendero`;
+  const offText = offM === null ? "" : `Estás a ${metersLabel(offM)} del sendero`;
   const figures = going && [
     [back ? "Regresado" : "Recorrido", ...formatKm(going.doneKm).split(" "), "text-on-surface"],
     ["Falta", ...formatKm(going.leftKm).split(" "), "text-secondary"],
@@ -410,7 +441,6 @@ function Viewer({ slug }: { slug: string }) {
   ];
   const expanded = open === "avance";
   // una tarjeta a la vez: pin tocado > aviso próximo > cambio de tracción
-  const annotations = route.annotations;
   const totalKm = routeProfile ? routeProfile[routeProfile.length - 1][0] : 0;
   const next = going && annotations ? upcoming(annotations, totalKm, back ? totalKm - going.doneKm : going.doneKm, back, going.lngLat, seen) : null;
   const near = next?.notice?.annotation;
@@ -451,6 +481,35 @@ function Viewer({ slug }: { slug: string }) {
       drain: true,
     };
   }
+  // sin lectura vigente al abrir la hoja, el punto se fija con la primera que llegue
+  if (open === "reportar" && !spot && progress && !progress.stale && profile) {
+    const [, , lng, lat] = profile[progress.index];
+    setSpot({ km: Math.round((back ? totalKm - progress.doneKm : progress.doneKm) * 100) / 100, lng, lat, offM: progress.offM, accuracy: progress.accuracy });
+  }
+  const canReport = !!route.canAnnotate && !!route.routeId && !!routeProfile;
+  function openReport() {
+    setSpot(null);
+    setMark(null);
+    setNote("");
+    setOpen("reportar");
+    if (!tracking) ready?.locate();
+  }
+  function report() {
+    if (!spot || !mark) return;
+    const traction = mark in TRACTION;
+    enqueueAnnotation({
+      routeId: route!.routeId!,
+      slug,
+      kind: traction ? "traccion" : (mark as NoticeKind),
+      traction: traction ? (mark as Traction) : null,
+      km: spot.km,
+      lng: spot.lng,
+      lat: spot.lat,
+      note: note.trim() || null,
+    });
+    setOpen(null);
+  }
+  const rejected = pending.find((p) => p.error);
   return (
     <div className="fixed inset-0 bg-[#e3e8e1]">
       <TrackMap
@@ -540,6 +599,27 @@ function Viewer({ slug }: { slug: string }) {
             {card.drain && <div className="h-1 origin-left" style={{ background: card.color, animation: "drain 10s linear forwards" }} onAnimationEnd={card.close} />}
           </div>
         )}
+        {waiting > 0 && (
+          <p role="status" className="pointer-events-auto flex items-center gap-2 rounded-full bg-surface-container-lowest/95 px-3 py-1.5 text-xs shadow-lg ring-1 ring-outline-variant/60">
+            <CloudOff className="size-4 shrink-0 text-on-surface-variant" aria-hidden />
+            {waiting} por subir · se envían al tener señal
+          </p>
+        )}
+        {rejected && (
+          <div role="alert" className="pointer-events-auto w-full max-w-md rounded-2xl bg-surface-container-lowest p-3 text-sm shadow-lg ring-1 ring-error/40">
+            <p className="text-error">
+              <b>{rejected.kind === "traccion" ? TRACTION[rejected.traction!].label : NOTICE[rejected.kind].label} · {kmLabel(rejected.km)}</b> no se subió: {rejected.error}
+            </p>
+            <div className="mt-2 flex justify-end gap-2">
+              <button type="button" onClick={() => discardAnnotation(rejected.id)} className="rounded-full px-3 py-1.5 font-headline font-semibold hover:bg-error/10">
+                Descartar
+              </button>
+              <button type="button" onClick={() => retryAnnotation(rejected.id)} className="rounded-full border border-error/40 px-3 py-1.5 font-headline font-semibold hover:bg-error/10">
+                Reintentar
+              </button>
+            </div>
+          </div>
+        )}
         {open === "capas" && coverage && (
           <p className="pointer-events-auto flex items-center gap-3 rounded-full bg-surface-container-lowest/95 px-3 py-1.5 text-xs shadow-lg ring-1 ring-outline-variant/60">
             <span className="flex items-center gap-1">
@@ -560,8 +640,8 @@ function Viewer({ slug }: { slug: string }) {
         )}
       </div>
 
-      {/* con el avance desplegado suben: la hoja llega a media pantalla */}
-      <div className={clsx("absolute right-3 flex -translate-y-1/2 flex-col gap-3 transition-[top]", expanded ? "top-1/4" : "top-1/2")}>
+      {/* con el avance o la hoja de reportar desplegados suben: las hojas llegan a media pantalla o más */}
+      <div className={clsx("absolute right-3 flex -translate-y-1/2 flex-col gap-3 transition-[top]", expanded ? "top-1/4" : open === "reportar" ? "top-1/5" : "top-1/2")}>
         <button
           type="button"
           aria-label={overlays.length ? `Capas del mapa (${overlays.length} prendidas)` : "Capas del mapa"}
@@ -581,11 +661,26 @@ function Viewer({ slug }: { slug: string }) {
           aria-label="Seguir mi ubicación"
           aria-pressed={tracking}
           disabled={!ready}
-          onClick={() => ready?.locate()}
+          onClick={() => {
+            // con el seguimiento prendido, el botón apaga el GPS: la última lectura deja de valer como "donde estás"
+            if (tracking) setProgress((p) => p && { ...p, stale: true });
+            ready?.locate();
+          }}
           className={clsx(ROUND, tracking ? "bg-primary text-on-primary" : "bg-surface-container-lowest text-on-surface")}
         >
           <LocateFixed className="size-6" aria-hidden />
         </button>
+        {canReport && (
+          <button
+            type="button"
+            aria-label="Reportar en este punto"
+            aria-expanded={open === "reportar"}
+            onClick={() => (open === "reportar" ? setOpen(null) : openReport())}
+            className={clsx(ROUND, "bg-secondary text-on-secondary")}
+          >
+            <MessageSquarePlus className="size-6" aria-hidden />
+          </button>
+        )}
       </div>
 
       {profile && open !== "capas" && expanded && (
@@ -704,6 +799,102 @@ function Viewer({ slug }: { slug: string }) {
         </div>
       )}
 
+      {open === "reportar" && (
+        <div className="absolute inset-x-0 bottom-0 max-h-[80dvh] overflow-y-auto rounded-t-3xl bg-surface-container-lowest px-4 pt-2 pb-[max(1rem,env(safe-area-inset-bottom))] shadow-2xl ring-1 ring-outline-variant/60">
+          <div className="mb-1 flex justify-center">
+            <button type="button" onClick={() => setOpen(null)} aria-label="Cerrar" className="flex flex-col items-center gap-1 px-8 text-on-surface-variant">
+              <span className="h-1 w-10 rounded-full bg-outline-variant" aria-hidden />
+              <ChevronDown className="size-5" aria-hidden />
+            </button>
+          </div>
+          <div className="mb-3 flex items-center justify-between gap-2">
+            <h2 className="font-headline text-xl font-bold">Reportar aquí</h2>
+            <span className="flex items-center gap-1.5 rounded-lg border border-outline-variant bg-surface-container px-2.5 py-1 font-mono text-xs uppercase">
+              <span className={clsx("size-2 rounded-full", online ? "bg-primary" : "bg-secondary-container")} aria-hidden />
+              {spot ? kmLabel(spot.km) : "Km …"}
+              {!online && " · sin señal"}
+            </span>
+          </div>
+          {!spot ? (
+            <p className="mb-3 font-mono text-xs text-on-surface-variant">Buscando tu ubicación…</p>
+          ) : (
+            spot.offM > 50 &&
+            spot.offM > spot.accuracy && (
+              <p className="mb-3 flex gap-2 rounded-xl bg-secondary-fixed/50 p-2.5 text-sm text-on-secondary-container">
+                <TriangleAlert className="size-4 shrink-0 text-secondary" aria-hidden />
+                Estás a {metersLabel(spot.offM)} del sendero: se marca el punto más cercano del trazo.
+              </p>
+            )
+          )}
+          <p className={SECTION}>Tracción desde este punto</p>
+          {back ? (
+            <p className="mb-4 flex items-center gap-1.5 text-sm text-on-surface-variant">
+              <Info className="size-4 shrink-0" aria-hidden />
+              La tracción se marca de ida.
+            </p>
+          ) : (
+            <>
+              <div className="grid grid-cols-3 gap-1 rounded-2xl border border-outline-variant bg-surface-container p-1">
+                {(Object.keys(TRACTION) as Traction[]).map((t) => (
+                  <button
+                    key={t}
+                    type="button"
+                    aria-pressed={mark === t}
+                    onClick={() => setMark(t)}
+                    className={clsx("flex items-center justify-center gap-2 rounded-xl border py-2.5 font-headline font-semibold", mark === t ? "bg-surface-container-lowest" : "border-transparent")}
+                    style={mark === t ? { borderColor: TRACTION[t].color, background: `${TRACTION[t].color}1f` } : undefined}
+                  >
+                    <span className="size-2.5 rounded-full" style={{ background: TRACTION[t].color }} aria-hidden />
+                    {TRACTION[t].label}
+                  </button>
+                ))}
+              </div>
+              <p className="mt-1.5 mb-4 flex items-center gap-1.5 text-sm text-on-surface-variant">
+                <Info className="size-4 shrink-0" aria-hidden />
+                El tramo sigue hasta que la cambies.
+              </p>
+            </>
+          )}
+          <p className={SECTION}>Marcar un punto</p>
+          <div className="grid grid-cols-3 gap-2">
+            {(Object.keys(NOTICE) as NoticeKind[]).map((k) => {
+              const n = NOTICE[k];
+              return (
+                <button
+                  key={k}
+                  type="button"
+                  aria-pressed={mark === k}
+                  onClick={() => setMark(k)}
+                  className={clsx("flex flex-col items-center gap-1.5 rounded-2xl border p-2.5 text-sm font-semibold", mark === k ? "border-2" : "border-outline-variant")}
+                  style={mark === k ? { borderColor: n.color, background: `${n.color}1f` } : undefined}
+                >
+                  <span className="flex size-10 items-center justify-center rounded-full text-white" style={{ background: n.color }}>
+                    <n.icon className="size-5" aria-hidden />
+                  </span>
+                  {n.label}
+                </button>
+              );
+            })}
+          </div>
+          <textarea
+            value={note}
+            onChange={(e) => setNote(e.target.value)}
+            maxLength={NOTE_MAX}
+            rows={2}
+            aria-label="Nota"
+            placeholder={mark === "comentario" ? "Escribe el comentario" : "Agrega una nota (opcional)"}
+            className="mt-3 w-full resize-none rounded-2xl border border-outline-variant bg-surface-container-lowest px-4 py-3 text-sm focus:border-primary focus:outline-none"
+          />
+          <button
+            type="button"
+            onClick={report}
+            disabled={!spot || !mark || (mark === "comentario" && !note.trim())}
+            className="mt-2 w-full rounded-2xl bg-primary py-3 font-headline font-bold text-on-primary disabled:opacity-40"
+          >
+            Guardar
+          </button>
+        </div>
+      )}
       {open === "capas" && (
         <LayerSheet
           layers={{ ...layers, base }}

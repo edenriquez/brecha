@@ -4,6 +4,7 @@ import { useEffect } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { ChevronRight } from "lucide-react";
+import { flushAnnotations } from "@/lib/annotation-queue";
 import { useDownloads } from "@/lib/offline";
 
 /** Avance de la cola de descargas en cualquier página, salvo en /descargas que ya lo muestra. */
@@ -11,6 +12,13 @@ export function DownloadPill() {
   const { routes, done, total } = useDownloads(false);
   const pathname = usePathname();
   const active = total > 0;
+
+  // las anotaciones capturadas sin señal en el visor suben en cualquier página: al abrir la app y al volver la red
+  useEffect(() => {
+    void flushAnnotations();
+    window.addEventListener("online", flushAnnotations);
+    return () => window.removeEventListener("online", flushAnnotations);
+  }, []);
 
   // la cola solo avanza con la app abierta
   useEffect(() => {
