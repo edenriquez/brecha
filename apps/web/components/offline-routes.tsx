@@ -270,8 +270,9 @@ function Viewer({ slug }: { slug: string }) {
   // `fix`: la lectura misma, antes de llevarla al trazo
   const [spot, setSpot] = useState<{ km: number; lng: number; lat: number; offM: number; accuracy: number; fix: { lng: number; lat: number } } | null>(null);
   const [spotError, setSpotError] = useState<string | null>(null);
-  // la lectura pedida más reciente: una respuesta de otra apertura de la hoja se ignora
+  // la lectura pedida más reciente: una respuesta de otra apertura de la hoja se ignora; `spotWaiting`: la hoja aún espera su punto
   const spotRequest = useRef(0);
+  const spotWaiting = useRef(false);
   const [mark, setMark] = useState<Traction | NoticeKind | null>(null);
   const [note, setNote] = useState("");
   // aviso de fuera del sendero reducido a su ícono; vuelve a salir completo si regresas al sendero y te sales otra vez
@@ -499,13 +500,22 @@ function Viewer({ slug }: { slug: string }) {
   }
   const canReport = !!route.canAnnotate && !!route.routeId && !!routeProfile;
   // la última lectura conocida puede ser de antes de bloquear el teléfono: el punto sale de una nueva
+  // el punto se fija con la primera lectura posterior a abrir la hoja: la que se pide aquí o la siguiente del seguimiento del mapa
+  function takeSpot(lngLat: [number, number], accuracy: number) {
+    const p = profile && locate({ lngLat, accuracy }, back, progress?.index ?? resume.current);
+    if (!p) return;
+    spotWaiting.current = false;
+    const [, , lng, lat] = profile[p.index];
+    setSpotError(null);
+    setSpot({ km: Math.round((back ? totalKm - p.doneKm : p.doneKm) * 100) / 100, lng, lat, offM: p.offM, accuracy: p.accuracy, fix: { lng: lngLat[0], lat: lngLat[1] } });
+  }
   function requestSpot() {
     const id = ++spotRequest.current;
-    const last = progress?.index ?? resume.current;
+    spotWaiting.current = true;
     setSpot(null);
     setSpotError(null);
     const failed = (e?: GeolocationPositionError) => {
-      if (id === spotRequest.current) setSpotError(e?.code === 1 ? NO_PERMISSION : "No pudimos leer tu ubicación.");
+      if (id === spotRequest.current && spotWaiting.current) setSpotError(e?.code === 1 ? NO_PERMISSION : "No pudimos leer tu ubicación.");
     };
     if (!navigator.geolocation) {
       failed();
@@ -513,10 +523,7 @@ function Viewer({ slug }: { slug: string }) {
     }
     navigator.geolocation.getCurrentPosition(
       ({ coords }) => {
-        const p = id === spotRequest.current && profile && locate({ lngLat: [coords.longitude, coords.latitude], accuracy: coords.accuracy }, back, last);
-        if (!p) return;
-        const [, , lng, lat] = profile[p.index];
-        setSpot({ km: Math.round((back ? totalKm - p.doneKm : p.doneKm) * 100) / 100, lng, lat, offM: p.offM, accuracy: p.accuracy, fix: { lng: coords.longitude, lat: coords.latitude } });
+        if (id === spotRequest.current && spotWaiting.current) takeSpot([coords.longitude, coords.latitude], coords.accuracy);
       },
       failed,
       { enableHighAccuracy: true, maximumAge: 0, timeout: 20000 },
@@ -532,6 +539,7 @@ function Viewer({ slug }: { slug: string }) {
   }
   const closeReport = () => {
     spotRequest.current++;
+    spotWaiting.current = false;
     setOpen(null);
   };
   // fuera del sendero se marca el punto más cercano del trazo; demasiado lejos ya no es "aquí"
@@ -576,6 +584,7 @@ function Viewer({ slug }: { slug: string }) {
         onPosition={(lngLat, accuracy) => {
           gps.current = { lngLat, accuracy };
           setProgress((prev) => locate(gps.current!, back, prev?.index ?? resume.current));
+          if (open === "reportar" && spotWaiting.current) takeSpot(lngLat, accuracy);
         }}
       />
       {/* a la derecha queda la atribución del mapa */}
