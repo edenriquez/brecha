@@ -360,15 +360,21 @@ type RouteNotes = Required<Pick<OfflineRoute, "annotations" | "canAnnotate">> & 
 async function fetchAnnotations(slug: string, signal: AbortSignal): Promise<RouteNotes> {
   const supabase = createClient();
   const timeout = withTimeout(signal);
-  const [{ data, error }, { data: route }, { data: auth }] = await Promise.all([
+  const [{ data, error }, { data: route, error: routeError }, { data: auth }] = await Promise.all([
     supabase.from("route_annotations").select(`${ANNOTATION_COLUMNS}, routes!inner()`).eq("routes.slug", slug).order("km").limit(200).abortSignal(timeout),
     supabase.from("routes").select("id, created_by").eq("slug", slug).abortSignal(timeout).maybeSingle(),
     // getSession lee la cookie, no va a la red como getUser
     supabase.auth.getSession(),
   ]);
-  if (error) throw new Error(`route_annotations ${slug}: ${error.message}`);
+  // todo o nada: una respuesta a medias (señal débil) no debe guardar "no puede anotar" y quitarle el botón a quien sí puede
+  if (error || routeError) throw new Error(`route_annotations ${slug}: ${(error ?? routeError)!.message}`);
   const uid = auth.session?.user.id;
-  const canAnnotate = !!uid && !!route && (route.created_by === uid || (await supabase.rpc("is_admin").abortSignal(timeout)).data === true);
+  let canAnnotate = !!uid && route?.created_by === uid;
+  if (uid && route && !canAnnotate) {
+    const admin = await supabase.rpc("is_admin").abortSignal(timeout);
+    if (admin.error) throw new Error(`is_admin: ${admin.error.message}`);
+    canAnnotate = admin.data === true;
+  }
   return { annotations: data as RouteAnnotation[], routeId: route?.id, canAnnotate };
 }
 

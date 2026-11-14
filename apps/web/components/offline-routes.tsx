@@ -9,7 +9,7 @@ import { ElevationProfile } from "@/components/elevation-profile";
 import { LayerSheet, loadLayers, overlaySaved, REGIONAL, saveLayers, savedOptions, useOnline, type MapLayers, type Overlay } from "@/components/layer-sheet";
 // sin next/dynamic: así sus scripts vienen en el HTML que guarda el service worker y el mapa abre sin red
 import { routeCloses, TrackMap } from "@/components/track-map";
-import { discardAnnotation, enqueueAnnotation, flushAnnotations, retryAnnotation, usePendingAnnotations } from "@/lib/annotation-queue";
+import { discardAnnotation, enqueueAnnotation, flushAnnotations, forgetUploaded, retryAnnotation, usePendingAnnotations } from "@/lib/annotation-queue";
 import { kmLabel, NOTE_MAX, NOTICE, TRACTION, upcoming, type NoticeKind, type RouteAnnotation, type Traction } from "@/lib/annotations";
 import { daysAgoLabel } from "@/lib/community";
 import { coverageGeoJson, setCoverage } from "@/lib/coverage-layer";
@@ -284,7 +284,8 @@ function Viewer({ slug }: { slug: string }) {
   const [back, setBack] = useState(saved?.back ?? false);
   // por dónde iba el recorrido guardado: sin él, un ida y vuelta no sabe en cuál de las dos pasadas vas
   const resume = useRef(saved?.index ?? null);
-  const [progress, setProgress] = useState<(ReturnType<typeof trackProgress> & { accuracy: number; lngLat: [number, number] }) | null>(null);
+  // `stale`: el GPS se apagó después de esta lectura; sirve para el avance pero no para reportar
+  const [progress, setProgress] = useState<(ReturnType<typeof trackProgress> & { accuracy: number; lngLat: [number, number]; stale?: boolean }) | null>(null);
   const gps = useRef<{ lngLat: [number, number]; accuracy: number } | null>(null);
   // avisos y tramos ya avisados en este recorrido, y el pin tocado con el aviso próximo que había al tocarlo
   const [seen, setSeen] = useState(() => new Set<string>());
@@ -315,9 +316,26 @@ function Viewer({ slug }: { slug: string }) {
   }, [route, layerBounds]);
   const finished = download?.status === "lista";
   // lo que sigue en el teléfono se pinta junto a lo guardado; al subir algo se relee para cambiar los temporales por las filas
-  const pending = usePendingAnnotations(slug, () => refreshAnnotations(slug, new AbortController().signal).then((notes) => notes && setRoute((r) => r && { ...r, ...notes })));
+  const refresh = (signal: AbortSignal) =>
+    refreshAnnotations(slug, signal).then((notes) => {
+      if (!notes) return;
+      // lo recién subido ya viene en la relectura: sale de la cola
+      forgetUploaded(slug, notes.annotations.map((a) => a.id));
+      setRoute((r) => r && { ...r, ...notes });
+    });
+  const pending = usePendingAnnotations(slug, () => refresh(new AbortController().signal));
   const routeAnnotations = route?.annotations;
-  const annotations = useMemo(() => (pending.length ? [...(routeAnnotations ?? []), ...pending] : routeAnnotations), [routeAnnotations, pending]);
+  const annotations = useMemo(() => {
+    const extra = pending.filter((p) => !routeAnnotations?.some((a) => a.id === p.id));
+    return extra.length ? [...(routeAnnotations ?? []), ...extra] : routeAnnotations;
+  }, [routeAnnotations, pending]);
+  const waiting = pending.filter((p) => !p.error && !p.done).length;
+  // con señal débil el navegador no avisa "online": mientras haya algo por subir se reintenta cada minuto
+  useEffect(() => {
+    if (!waiting) return;
+    const timer = setInterval(flushAnnotations, 60_000);
+    return () => clearInterval(timer);
+  }, [waiting]);
 
   useEffect(() => {
     (offlineSupported() ? getOfflineRoute(slug) : Promise.resolve(null)).then(setRoute);
@@ -326,9 +344,10 @@ function Viewer({ slug }: { slug: string }) {
   // con señal se vuelven a pedir las anotaciones, sin esperar para pintar lo guardado; sin ella o si fallan, quedan las guardadas
   useEffect(() => {
     const controller = new AbortController();
-    if (offlineSupported()) refreshAnnotations(slug, controller.signal).then((notes) => notes && setRoute((r) => r && { ...r, ...notes }));
+    if (offlineSupported()) void refresh(controller.signal);
     void flushAnnotations();
     return () => controller.abort();
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- refresh es nueva en cada render; solo depende de slug
   }, [slug]);
 
   // al terminar una descarga se relee el registro (las capas nuevas pasan a "Descargado"); con el mismo trazo, el mapa no se rehace
@@ -462,8 +481,8 @@ function Viewer({ slug }: { slug: string }) {
       drain: true,
     };
   }
-  // sin lectura al abrir la hoja, el punto se fija con la primera que llegue
-  if (open === "reportar" && !spot && progress && profile) {
+  // sin lectura vigente al abrir la hoja, el punto se fija con la primera que llegue
+  if (open === "reportar" && !spot && progress && !progress.stale && profile) {
     const [, , lng, lat] = profile[progress.index];
     setSpot({ km: Math.round((back ? totalKm - progress.doneKm : progress.doneKm) * 100) / 100, lng, lat, offM: progress.offM, accuracy: progress.accuracy });
   }
@@ -490,7 +509,6 @@ function Viewer({ slug }: { slug: string }) {
     });
     setOpen(null);
   }
-  const waiting = pending.filter((p) => !p.error).length;
   const rejected = pending.find((p) => p.error);
   return (
     <div className="fixed inset-0 bg-[#e3e8e1]">
@@ -643,7 +661,11 @@ function Viewer({ slug }: { slug: string }) {
           aria-label="Seguir mi ubicación"
           aria-pressed={tracking}
           disabled={!ready}
-          onClick={() => ready?.locate()}
+          onClick={() => {
+            // con el seguimiento prendido, el botón apaga el GPS: la última lectura deja de valer como "donde estás"
+            if (tracking) setProgress((p) => p && { ...p, stale: true });
+            ready?.locate();
+          }}
           className={clsx(ROUND, tracking ? "bg-primary text-on-primary" : "bg-surface-container-lowest text-on-surface")}
         >
           <LocateFixed className="size-6" aria-hidden />
