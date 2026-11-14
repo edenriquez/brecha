@@ -279,9 +279,9 @@ function Viewer({ slug }: { slug: string }) {
   const resume = useRef(saved?.index ?? null);
   const [progress, setProgress] = useState<(ReturnType<typeof trackProgress> & { accuracy: number; lngLat: [number, number] }) | null>(null);
   const gps = useRef<{ lngLat: [number, number]; accuracy: number } | null>(null);
-  // avisos y tramos ya avisados en este recorrido, y el pin tocado
+  // avisos y tramos ya avisados en este recorrido, y el pin tocado con el aviso próximo que había al tocarlo
   const [seen, setSeen] = useState(() => new Set<string>());
-  const [picked, setPicked] = useState<string | null>(null);
+  const [picked, setPicked] = useState<{ id: string; over?: string } | null>(null);
   // con menos de 2 puntos no hay perfil que recorrer
   const routeProfile = route?.profile && route.profile.length >= 2 ? route.profile : null;
   const reversed = useMemo(() => routeProfile && reverseProfile(routeProfile), [routeProfile]);
@@ -413,8 +413,11 @@ function Viewer({ slug }: { slug: string }) {
   const annotations = route.annotations;
   const totalKm = routeProfile ? routeProfile[routeProfile.length - 1][0] : 0;
   const next = going && annotations ? upcoming(annotations, totalKm, back ? totalKm - going.doneKm : going.doneKm, back, going.lngLat, seen) : null;
-  const pin = annotations?.find((a) => a.id === picked);
-  const shown = pin ?? next?.notice?.annotation;
+  const near = next?.notice?.annotation;
+  // un aviso próximo nuevo le gana al pin que se quedó abierto
+  if (picked && near && picked.over !== near.id) setPicked(null);
+  const pin = picked ? annotations?.find((a) => a.id === picked.id) : undefined;
+  const shown = pin ?? near;
   const dismiss = (id: string) => setSeen((s) => new Set(s).add(id));
   let card: { key: string; title: string; note: string | null; meta: string; color: string; badge: ReactNode; close: () => void; drain?: boolean } | null = null;
   if (shown) {
@@ -429,7 +432,8 @@ function Viewer({ slug }: { slug: string }) {
       badge: <kind.icon className="size-5" aria-hidden />,
       close: () => {
         setPicked(null);
-        dismiss(shown.id);
+        // cerrar un pin leído de lejos no cuenta como avisado: al acercarte sale su aviso
+        if (shown.id === near?.id) dismiss(shown.id);
       },
     };
   } else if (next?.traction) {
@@ -457,7 +461,7 @@ function Viewer({ slug }: { slug: string }) {
         reversed={back}
         done={done}
         annotations={annotations}
-        onNotice={setPicked}
+        onNotice={(id) => setPicked({ id, over: near?.id })}
         onReady={(r) => {
           setReady(r);
           // recorrido que ya estaba en curso: el GPS se prende solo
