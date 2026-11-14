@@ -1,10 +1,12 @@
 "use client";
 
 import { useEffect, useSyncExternalStore } from "react";
+import { ANNOTATION_COLUMNS, type RouteAnnotation } from "@/lib/annotations";
 import type { ProfilePoint } from "@/lib/gpx";
 import { cellsAreaKm2, zoneCells, zoneTiles, type Tile } from "@/lib/hex-grid";
 import { DEM_TILES, MAP_STYLE, SATELLITE_TILES } from "@/lib/map-sources";
 import type { RouteSummary } from "@/lib/routes";
+import { createClient } from "@/lib/supabase/client";
 
 // Los nombres de los caches y la llave de las teselas vectoriales los comparte public/sw.js
 const MAP_CACHE = "brecha-mapas";
@@ -87,6 +89,8 @@ export type OfflineRoute = OfflineRouteInfo & {
   options?: DownloadOptions;
   /** Formato anterior: true si quedaron guardadas las capas regionales. Solo se lee */
   layers?: boolean;
+  /** Tracción y avisos de quien subió la ruta; los registros anteriores no los traen */
+  annotations?: RouteAnnotation[];
 };
 
 /** El visor sin conexión no deja alejarse ni acercarse más allá de lo descargado. */
@@ -340,6 +344,36 @@ export async function getOfflineRoute(slug: string): Promise<OfflineRoute | null
   return res ? res.json() : null;
 }
 
+async function saveRecord(record: OfflineRoute) {
+  await (await routesCache()).put(ROUTE_KEY + encodeURIComponent(record.slug), new Response(JSON.stringify(record), { headers: { "Content-Type": "application/json" } }));
+}
+
+/** Anotaciones de la ruta, con la sesión del navegador: quien la subió sin publicar también ve las suyas. */
+async function fetchAnnotations(slug: string, signal: AbortSignal): Promise<RouteAnnotation[]> {
+  const { data, error } = await createClient()
+    .from("route_annotations")
+    .select(`${ANNOTATION_COLUMNS}, routes!inner()`)
+    .eq("routes.slug", slug)
+    .order("km")
+    .limit(200)
+    .abortSignal(withTimeout(signal));
+  if (error) throw new Error(`route_annotations ${slug}: ${error.message}`);
+  return data as RouteAnnotation[];
+}
+
+/** Vuelve a pedir las anotaciones de una ruta guardada y reescribe su registro; null si no se pudo (sin señal, sin registro). */
+export async function refreshAnnotations(slug: string, signal: AbortSignal) {
+  try {
+    const annotations = await fetchAnnotations(slug, signal);
+    const record = await getOfflineRoute(slug);
+    if (!record) return null;
+    await saveRecord({ ...record, annotations });
+    return annotations;
+  } catch {
+    return null;
+  }
+}
+
 /**
  * Teselas del relieve LiDAR que tocan la zona, leídas de cada parte con pmtiles. Se guardan en el cache de mapas
  * con una llave estable por parte y tesela (`…/lidar-izta/relieve-1/{z}/{x}/{y}`) que public/sw.js sirve sin red;
@@ -384,7 +418,7 @@ export async function downloadRoute(
   // sin elegir (Reanudar, Guardadas) se repite lo de la vez anterior o lo de siempre
   const radiusKm = choice?.radiusKm ?? prev?.radiusKm ?? DEFAULT_RADIUS_KM;
   const asked = choice?.options ?? prev?.options ?? DEFAULT_OPTIONS;
-  const [style, zone] = await Promise.all([styleResources(signal), layerZone(line, signal)]);
+  const [style, zone, annotations] = await Promise.all([styleResources(signal), layerZone(line, signal), fetchAnnotations(route.slug, signal)]);
   const options: DownloadOptions = {
     terrain: asked.terrain,
     contours: asked.terrain && asked.contours,
@@ -404,8 +438,6 @@ export async function downloadRoute(
   if (tiles.length + lidar.length > MAX_TILES) throw new FatalError("La ruta es demasiado extensa para guardarla sin conexión.");
 
   // el registro va antes de bajar: si se corta, sus teselas se pueden borrar (una ruta nueva queda incompleta)
-  const saveRecord = async (record: OfflineRoute) =>
-    (await routesCache()).put(ROUTE_KEY + encodeURIComponent(route.slug), new Response(JSON.stringify(record), { headers: { "Content-Type": "application/json" } }));
   // ampliación: la ruta ya estaba completa; si se corta, sigue completa con lo anterior
   const extending = !!prev && prev.complete !== false;
   // al reanudar se parte de lo ya bajado: las teselas en cache se saltan
@@ -422,9 +454,10 @@ export async function downloadRoute(
     radiusKm,
     cells,
     options,
+    annotations,
   };
   // mientras amplía, el registro guardado es el anterior (radio, celdas y opciones) con las teselas nuevas
-  const progressRecord = (b: number): OfflineRoute => (extending ? { ...prev, tiles: record.tiles, bytes: prev.bytes + b } : { ...record, bytes: b });
+  const progressRecord = (b: number): OfflineRoute => (extending ? { ...prev, annotations, tiles: record.tiles, bytes: prev.bytes + b } : { ...record, bytes: b });
   await saveRecord(progressRecord(bytes));
   const storage = await navigator.storage?.estimate?.().catch(() => undefined);
   if (storage?.quota !== undefined && storage.usage !== undefined && storage.quota - storage.usage < estimateDownload(line, radiusKm, options, zone).mb * 1024 * 1024) {

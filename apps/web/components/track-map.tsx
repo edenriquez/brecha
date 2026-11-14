@@ -29,7 +29,7 @@ function badge(text: string, color: string, title: string, round: boolean) {
 }
 
 /** Tracción pintada sobre el trazo y avisos numerados; devuelve los marcadores para quitarlos al redibujar. */
-function drawAnnotations(map: maplibregl.Map, line: LineCoords, annotations: RouteAnnotation[]) {
+function drawAnnotations(map: maplibregl.Map, line: LineCoords, annotations: RouteAnnotation[], onNotice: { current?: (id: string) => void }) {
   const km = lineKm(line);
   const segments = tractionSegments(annotations, km[km.length - 1]).filter((s) => s.traction && s.to > s.from);
   setTraction(map, segments.map((s) => ({ line: sliceLine(line, km, s.from, s.to), color: TRACTION[s.traction!].color })));
@@ -42,7 +42,20 @@ function drawAnnotations(map: maplibregl.Map, line: LineCoords, annotations: Rou
     });
   notices(annotations).forEach((a, i) => {
     const kind = NOTICE[a.kind as keyof typeof NOTICE];
-    markers.push(new maplibregl.Marker({ element: badge(String(i + 1), kind.color, `${i + 1}. ${kind.label}`, true) }).setLngLat([a.lng, a.lat]));
+    let el: HTMLElement = badge(String(i + 1), kind.color, `${i + 1}. ${kind.label}`, true);
+    if (onNotice.current) {
+      // se toca con el dedo y en movimiento: área de 40 px alrededor del mismo círculo
+      const pin = el;
+      el = document.createElement("button");
+      el.className = "flex size-10 items-center justify-center";
+      el.setAttribute("aria-label", pin.title);
+      el.append(pin);
+      el.addEventListener("click", (e) => {
+        e.stopPropagation();
+        onNotice.current?.(a.id);
+      });
+    }
+    markers.push(new maplibregl.Marker({ element: el }).setLngLat([a.lng, a.lat]));
   });
   markers.forEach((m) => m.addTo(map));
   return markers;
@@ -62,6 +75,7 @@ export function routeCloses(line: LineCoords) {
  * `onTracking`: si el GPS sigue tu ubicación.
  * `done`: el tramo ya recorrido, en azul sobre el trazo.
  * `annotations`: tracción por tramos y avisos de quien subió la ruta. `onPick`: un clic en el mapa elige ese punto (editor de anotaciones).
+ * `onNotice`: tocar el pin de un aviso lo abre (visor).
  */
 export function TrackMap({
   line,
@@ -76,6 +90,7 @@ export function TrackMap({
   done = null,
   annotations,
   onPick,
+  onNotice,
 }: {
   line: LineCoords;
   hover: [number, number] | null;
@@ -89,6 +104,7 @@ export function TrackMap({
   done?: LineCoords | null;
   annotations?: RouteAnnotation[];
   onPick?: (lngLat: [number, number]) => void;
+  onNotice?: (id: string) => void;
 }) {
   const router = useRouter();
   const container = useRef<HTMLDivElement>(null);
@@ -103,6 +119,10 @@ export function TrackMap({
   useEffect(() => {
     onPickRef.current = onPick;
   }, [onPick]);
+  const onNoticeRef = useRef(onNotice);
+  useEffect(() => {
+    onNoticeRef.current = onNotice;
+  }, [onNotice]);
   const openHrefRef = useRef(openHref);
   useEffect(() => {
     openHrefRef.current = openHref;
@@ -159,7 +179,7 @@ export function TrackMap({
       addTopoLayers(map, offline);
       setTrack(map, line);
       setTrackDone(map, doneRef.current ?? []);
-      if (annotationsRef.current) annotationMarkers.current = drawAnnotations(map, line, annotationsRef.current);
+      if (annotationsRef.current) annotationMarkers.current = drawAnnotations(map, line, annotationsRef.current, onNoticeRef);
       setTerrain3d(map, terrain3dRef.current);
       if (terrain3dRef.current) map.easeTo({ pitch: TERRAIN_3D_PITCH, duration: 1000 });
       collapseAttribution(map);
@@ -211,7 +231,7 @@ export function TrackMap({
     const map = mapRef.current;
     if (!map || !styleLoaded.current) return;
     annotationMarkers.current.forEach((m) => m.remove());
-    annotationMarkers.current = annotations ? drawAnnotations(map, line, annotations) : [];
+    annotationMarkers.current = annotations ? drawAnnotations(map, line, annotations, onNoticeRef) : [];
   }, [annotations, line]);
 
   // solo cambia el texto: recrear el mapa perdería la vista
