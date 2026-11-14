@@ -1,7 +1,7 @@
 "use client";
 /* eslint-disable @next/next/no-html-link-for-pages -- sin red solo sirve la navegación completa (la maneja el service worker) */
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useSearchParams } from "next/navigation";
 import clsx from "clsx";
 import { ArrowLeft, ArrowUp, Check, ChevronDown, ChevronUp, Clock, CloudDownload, Hexagon, Layers, LocateFixed, Mountain, Navigation, Play, Smartphone, Trash2, TriangleAlert, Undo2, WifiOff, X } from "lucide-react";
@@ -9,6 +9,8 @@ import { ElevationProfile } from "@/components/elevation-profile";
 import { LayerSheet, loadLayers, overlaySaved, REGIONAL, saveLayers, savedOptions, useOnline, type MapLayers, type Overlay } from "@/components/layer-sheet";
 // sin next/dynamic: así sus scripts vienen en el HTML que guarda el service worker y el mapa abre sin red
 import { routeCloses, TrackMap } from "@/components/track-map";
+import { kmLabel, NOTICE, TRACTION, upcoming, type NoticeKind, type RouteAnnotation } from "@/lib/annotations";
+import { daysAgoLabel } from "@/lib/community";
 import { coverageGeoJson, setCoverage } from "@/lib/coverage-layer";
 import { setLidar, setWaterfalls } from "@/lib/lidar-layer";
 import { setSatellite, setTopoGroup, type maplibregl } from "@/lib/maplibre";
@@ -23,6 +25,7 @@ import {
   listOfflineRoutes,
   offlineSupported,
   queueDownload,
+  refreshAnnotations,
   storageStatus,
   useDownloads,
   useIosSafariTab,
@@ -249,6 +252,7 @@ function List() {
 // capas regionales: se crean al prenderlas la primera vez
 const REGIONAL_LAYERS = { roads: setRoads, waterfalls: setWaterfalls, viewpoints: setViewpoints, camps: setCamps };
 const ROUND = "pointer-events-auto relative flex size-12 items-center justify-center rounded-full shadow-lg ring-1 ring-outline-variant/60";
+const updatedLabel = (a: RouteAnnotation) => `actualizado ${daysAgoLabel(new Date(a.updated_at).toLocaleDateString("en-CA", { timeZone: "America/Mexico_City" }))}`;
 
 function Viewer({ slug }: { slug: string }) {
   const [route, setRoute] = useState<OfflineRoute | null | undefined>(undefined);
@@ -273,8 +277,11 @@ function Viewer({ slug }: { slug: string }) {
   const [back, setBack] = useState(saved?.back ?? false);
   // por dónde iba el recorrido guardado: sin él, un ida y vuelta no sabe en cuál de las dos pasadas vas
   const resume = useRef(saved?.index ?? null);
-  const [progress, setProgress] = useState<(ReturnType<typeof trackProgress> & { accuracy: number }) | null>(null);
+  const [progress, setProgress] = useState<(ReturnType<typeof trackProgress> & { accuracy: number; lngLat: [number, number] }) | null>(null);
   const gps = useRef<{ lngLat: [number, number]; accuracy: number } | null>(null);
+  // avisos y tramos ya avisados en este recorrido, y el pin tocado con el aviso próximo que había al tocarlo
+  const [seen, setSeen] = useState(() => new Set<string>());
+  const [picked, setPicked] = useState<{ id: string; over?: string } | null>(null);
   // con menos de 2 puntos no hay perfil que recorrer
   const routeProfile = route?.profile && route.profile.length >= 2 ? route.profile : null;
   const reversed = useMemo(() => routeProfile && reverseProfile(routeProfile), [routeProfile]);
@@ -303,6 +310,13 @@ function Viewer({ slug }: { slug: string }) {
 
   useEffect(() => {
     (offlineSupported() ? getOfflineRoute(slug) : Promise.resolve(null)).then(setRoute);
+  }, [slug]);
+
+  // con señal se vuelven a pedir las anotaciones, sin esperar para pintar lo guardado; sin ella o si fallan, quedan las guardadas
+  useEffect(() => {
+    const controller = new AbortController();
+    if (offlineSupported()) refreshAnnotations(slug, controller.signal).then((annotations) => annotations && setRoute((r) => r && { ...r, annotations }));
+    return () => controller.abort();
   }, [slug]);
 
   // al terminar una descarga se relee el registro (las capas nuevas pasan a "Descargado"); con el mismo trazo, el mapa no se rehace
@@ -359,7 +373,7 @@ function Viewer({ slug }: { slug: string }) {
   // `last` va en null al cambiar de modo: el índice recordado era del otro perfil
   function locate(fix: { lngLat: [number, number]; accuracy: number }, inReverse: boolean, last: number | null) {
     const p = inReverse ? reversed : routeProfile;
-    return p ? { ...trackProgress(p, { lng: fix.lngLat[0], lat: fix.lngLat[1] }, last), accuracy: fix.accuracy } : null;
+    return p ? { ...trackProgress(p, { lng: fix.lngLat[0], lat: fix.lngLat[1] }, last), accuracy: fix.accuracy, lngLat: fix.lngLat } : null;
   }
   function downloadMore(choice: DownloadChoice) {
     setRequested(choice.options);
@@ -371,6 +385,7 @@ function Viewer({ slug }: { slug: string }) {
   }
   function start() {
     resume.current = null;
+    setSeen(new Set());
     setStartedAt(Date.now());
     setProgress(gps.current && locate(gps.current, back, null));
     setOpen("avance");
@@ -378,6 +393,7 @@ function Viewer({ slug }: { slug: string }) {
   }
   function finish() {
     resume.current = null;
+    setSeen(new Set());
     setStartedAt(null);
     setBack(false);
     setActive(null);
@@ -393,6 +409,48 @@ function Viewer({ slug }: { slug: string }) {
     ["Por subir", Math.round(going.climbM).toLocaleString("es-MX"), "m", "text-on-surface"],
   ];
   const expanded = open === "avance";
+  // una tarjeta a la vez: pin tocado > aviso próximo > cambio de tracción
+  const annotations = route.annotations;
+  const totalKm = routeProfile ? routeProfile[routeProfile.length - 1][0] : 0;
+  const next = going && annotations ? upcoming(annotations, totalKm, back ? totalKm - going.doneKm : going.doneKm, back, going.lngLat, seen) : null;
+  const near = next?.notice?.annotation;
+  // un aviso próximo nuevo le gana al pin que se quedó abierto
+  if (picked && near && picked.over !== near.id) setPicked(null);
+  const pin = picked ? annotations?.find((a) => a.id === picked.id) : undefined;
+  const shown = pin ?? near;
+  const dismiss = (id: string) => setSeen((s) => new Set(s).add(id));
+  let card: { key: string; title: string; note: string | null; meta: string; color: string; badge: ReactNode; close: () => void; drain?: boolean } | null = null;
+  if (shown) {
+    const kind = NOTICE[shown.kind as NoticeKind];
+    const m = next?.notice ? Math.round(next.notice.m / 10) * 10 : 0;
+    card = {
+      key: shown.id,
+      title: pin ? `${kind.label} · ${kmLabel(pin.km)}` : m < 30 ? `${kind.label} aquí` : `${kind.label} a ${m} m`,
+      note: shown.note,
+      meta: pin ? updatedLabel(pin) : `${kmLabel(shown.km)} · ${updatedLabel(shown)}`,
+      color: kind.color,
+      badge: <kind.icon className="size-5" aria-hidden />,
+      close: () => {
+        setPicked(null);
+        // cerrar un pin leído de lejos no cuenta como avisado: al acercarte sale su aviso
+        if (shown.id === near?.id) dismiss(shown.id);
+      },
+    };
+  } else if (next?.traction) {
+    const { segment, leftKm } = next.traction;
+    const t = TRACTION[segment.traction!];
+    const mark = annotations!.find((a) => a.id === segment.id);
+    card = {
+      key: segment.id!,
+      title: segment.traction === "normal" ? "Vuelve a tracción normal" : `Aquí empieza ${t.label}`,
+      note: mark?.note ?? null,
+      meta: `Próximos ${formatKm(leftKm)}`,
+      color: t.color,
+      badge: segment.traction === "normal" ? <Check className="size-5" aria-hidden /> : <span className="font-headline text-xs font-bold">{t.label}</span>,
+      close: () => dismiss(segment.id!),
+      drain: true,
+    };
+  }
   return (
     <div className="fixed inset-0 bg-[#e3e8e1]">
       <TrackMap
@@ -402,6 +460,8 @@ function Viewer({ slug }: { slug: string }) {
         terrain3d={layers.terrain3d}
         reversed={back}
         done={done}
+        annotations={annotations}
+        onNotice={(id) => setPicked({ id, over: near?.id })}
         onReady={(r) => {
           setReady(r);
           // recorrido que ya estaba en curso: el GPS se prende solo
@@ -447,11 +507,39 @@ function Viewer({ slug }: { slug: string }) {
               <TriangleAlert className="size-5 shrink-0 text-secondary" aria-hidden />
               <span className="flex-1">
                 <span className="block font-headline text-sm font-bold">{offText}</span>
-                <span className="block text-sm">Regresa hacia la línea naranja.</span>
+                <span className="block text-sm">Regresa al trazo de la ruta.</span>
               </span>
               <X className="size-4 shrink-0" aria-hidden />
             </button>
           ))}
+        {card && (
+          <div key={card.key} role="status" className="pointer-events-auto w-full max-w-md overflow-hidden rounded-2xl bg-surface-container-lowest shadow-lg ring-1 ring-outline-variant/60">
+            <div className="flex items-start gap-3 p-3">
+              <span className="flex size-10 shrink-0 items-center justify-center rounded-full" style={card.drain ? { background: card.color, color: "#fff" } : { background: `${card.color}1f`, color: card.color }}>
+                {card.badge}
+              </span>
+              <div className="min-w-0 flex-1">
+                <p className="font-headline font-bold">{card.title}</p>
+                {card.note && <p className="text-sm">{card.note}</p>}
+                <div className="mt-1 flex items-center justify-between gap-2">
+                  <p className="font-mono text-[11px] text-on-surface-variant uppercase">{card.meta}</p>
+                  {!pin && (
+                    <button type="button" onClick={card.close} className="shrink-0 rounded-full border border-outline-variant px-3 py-1.5 font-headline text-sm font-semibold hover:bg-surface-container">
+                      Entendido
+                    </button>
+                  )}
+                </div>
+              </div>
+              {pin && (
+                <button type="button" onClick={card.close} aria-label="Cerrar" className="-m-1 rounded-full p-2 text-on-surface-variant hover:bg-surface-container">
+                  <X className="size-4" aria-hidden />
+                </button>
+              )}
+            </div>
+            {/* el cambio de tracción se cierra solo cuando la barra se consume (10 s) */}
+            {card.drain && <div className="h-1 origin-left" style={{ background: card.color, animation: "drain 10s linear forwards" }} onAnimationEnd={card.close} />}
+          </div>
+        )}
         {open === "capas" && coverage && (
           <p className="pointer-events-auto flex items-center gap-3 rounded-full bg-surface-container-lowest/95 px-3 py-1.5 text-xs shadow-lg ring-1 ring-outline-variant/60">
             <span className="flex items-center gap-1">
@@ -525,6 +613,7 @@ function Viewer({ slug }: { slug: string }) {
                     onClick={() => {
                       if (back === mode) return;
                       resume.current = null;
+                      setSeen(new Set());
                       setBack(mode);
                       setActive(null);
                       setProgress(gps.current && locate(gps.current, mode, null));
@@ -572,6 +661,16 @@ function Viewer({ slug }: { slug: string }) {
       )}
       {profile && !open && (
         <div className="absolute inset-x-3 bottom-3 mb-[env(safe-area-inset-bottom)] flex items-center rounded-2xl bg-surface-container-lowest shadow-lg ring-1 ring-outline-variant/60">
+          {annotations?.some((a) => a.kind === "traccion") && (
+            <p className="absolute bottom-full left-0 mb-2 flex gap-3 rounded-full bg-surface-container-lowest/95 px-3 py-1.5 font-mono text-[11px] shadow-lg ring-1 ring-outline-variant/60">
+              {Object.values(TRACTION).map((t) => (
+                <span key={t.label} className="flex items-center gap-1">
+                  <span className="size-2.5 rounded-full" style={{ background: t.color }} />
+                  {t.label}
+                </span>
+              ))}
+            </p>
+          )}
           {startedAt ? (
             <button type="button" aria-expanded={false} onClick={() => setOpen("avance")} className="flex w-full items-center gap-2 px-3 py-2.5 text-left">
               {figures ? (

@@ -137,3 +137,10 @@ body {
     animation: none;
   }
 }
+
+/* Tarjeta de cambio de tracción del visor (components/offline-routes.tsx): la barra se consume en los 10 s que dura */
+@keyframes drain {
+  to {
+    transform: scaleX(0);
+  }
+}
