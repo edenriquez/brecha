@@ -91,6 +91,9 @@ export type OfflineRoute = OfflineRouteInfo & {
   layers?: boolean;
   /** Tracción y avisos de quien subió la ruta; los registros anteriores no los traen */
   annotations?: RouteAnnotation[];
+  /** Id de la ruta en la base y si la sesión puede anotarla (la subió o modera), leídos con señal junto a las anotaciones */
+  routeId?: string;
+  canAnnotate?: boolean;
 };
 
 /** El visor sin conexión no deja alejarse ni acercarse más allá de lo descargado. */
@@ -348,27 +351,35 @@ async function saveRecord(record: OfflineRoute) {
   await (await routesCache()).put(ROUTE_KEY + encodeURIComponent(record.slug), new Response(JSON.stringify(record), { headers: { "Content-Type": "application/json" } }));
 }
 
-/** Anotaciones de la ruta, con la sesión del navegador: quien la subió sin publicar también ve las suyas. */
-async function fetchAnnotations(slug: string, signal: AbortSignal): Promise<RouteAnnotation[]> {
-  const { data, error } = await createClient()
-    .from("route_annotations")
-    .select(`${ANNOTATION_COLUMNS}, routes!inner()`)
-    .eq("routes.slug", slug)
-    .order("km")
-    .limit(200)
-    .abortSignal(withTimeout(signal));
+type RouteNotes = Required<Pick<OfflineRoute, "annotations" | "canAnnotate">> & Pick<OfflineRoute, "routeId">;
+
+/**
+ * Anotaciones de la ruta, con la sesión del navegador (quien la subió sin publicar también ve las suyas), y si esa
+ * sesión puede anotarla: el visor sin señal confía en esto; al subir decide el RLS.
+ */
+async function fetchAnnotations(slug: string, signal: AbortSignal): Promise<RouteNotes> {
+  const supabase = createClient();
+  const timeout = withTimeout(signal);
+  const [{ data, error }, { data: route }, { data: auth }] = await Promise.all([
+    supabase.from("route_annotations").select(`${ANNOTATION_COLUMNS}, routes!inner()`).eq("routes.slug", slug).order("km").limit(200).abortSignal(timeout),
+    supabase.from("routes").select("id, created_by").eq("slug", slug).abortSignal(timeout).maybeSingle(),
+    // getSession lee la cookie, no va a la red como getUser
+    supabase.auth.getSession(),
+  ]);
   if (error) throw new Error(`route_annotations ${slug}: ${error.message}`);
-  return data as RouteAnnotation[];
+  const uid = auth.session?.user.id;
+  const canAnnotate = !!uid && !!route && (route.created_by === uid || (await supabase.rpc("is_admin").abortSignal(timeout)).data === true);
+  return { annotations: data as RouteAnnotation[], routeId: route?.id, canAnnotate };
 }
 
 /** Vuelve a pedir las anotaciones de una ruta guardada y reescribe su registro; null si no se pudo (sin señal, sin registro). */
 export async function refreshAnnotations(slug: string, signal: AbortSignal) {
   try {
-    const annotations = await fetchAnnotations(slug, signal);
+    const notes = await fetchAnnotations(slug, signal);
     const record = await getOfflineRoute(slug);
     if (!record) return null;
-    await saveRecord({ ...record, annotations });
-    return annotations;
+    await saveRecord({ ...record, ...notes });
+    return notes;
   } catch {
     return null;
   }
@@ -418,7 +429,7 @@ export async function downloadRoute(
   // sin elegir (Reanudar, Guardadas) se repite lo de la vez anterior o lo de siempre
   const radiusKm = choice?.radiusKm ?? prev?.radiusKm ?? DEFAULT_RADIUS_KM;
   const asked = choice?.options ?? prev?.options ?? DEFAULT_OPTIONS;
-  const [style, zone, annotations] = await Promise.all([styleResources(signal), layerZone(line, signal), fetchAnnotations(route.slug, signal)]);
+  const [style, zone, notes] = await Promise.all([styleResources(signal), layerZone(line, signal), fetchAnnotations(route.slug, signal)]);
   const options: DownloadOptions = {
     terrain: asked.terrain,
     contours: asked.terrain && asked.contours,
@@ -454,10 +465,10 @@ export async function downloadRoute(
     radiusKm,
     cells,
     options,
-    annotations,
+    ...notes,
   };
   // mientras amplía, el registro guardado es el anterior (radio, celdas y opciones) con las teselas nuevas
-  const progressRecord = (b: number): OfflineRoute => (extending ? { ...prev, annotations, tiles: record.tiles, bytes: prev.bytes + b } : { ...record, bytes: b });
+  const progressRecord = (b: number): OfflineRoute => (extending ? { ...prev, ...notes, tiles: record.tiles, bytes: prev.bytes + b } : { ...record, bytes: b });
   await saveRecord(progressRecord(bytes));
   const storage = await navigator.storage?.estimate?.().catch(() => undefined);
   if (storage?.quota !== undefined && storage.usage !== undefined && storage.quota - storage.usage < estimateDownload(line, radiusKm, options, zone).mb * 1024 * 1024) {
