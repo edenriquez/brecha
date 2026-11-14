@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import type { RouteAnnotation } from "@/lib/annotations";
 import { createClient } from "@/lib/supabase/client";
 
@@ -17,13 +17,18 @@ export type QueuedAnnotation = RouteAnnotation & {
   done?: boolean;
 };
 
+/** Respuesta a "¿Sigue ahí?" que todavía no sube; sale de la cola al subir o si el servidor la rechaza (nunca lleva `error` ni `done`). */
+export type QueuedResponse = { id: string; slug: string; annotationId: string; stillThere: boolean; sent?: boolean; error?: string; done?: boolean };
+type Queued = QueuedAnnotation | QueuedResponse;
+const isResponse = (i: Queued) => "annotationId" in i;
+
 const KEY = "brecha:anotaciones-por-subir";
 const EVENT = "brecha:anotaciones-por-subir";
 // sin señal fetch no falla: se cuelga (y la sesión vencida se intenta renovar por la red)
 const TIMEOUT_MS = 15000;
 const DENIED = "Solo quien subió la ruta puede anotarla.";
 
-function load(): QueuedAnnotation[] {
+function load(): Queued[] {
   try {
     return JSON.parse(localStorage.getItem(KEY) ?? "[]");
   } catch {
@@ -32,7 +37,7 @@ function load(): QueuedAnnotation[] {
 }
 
 /** `uploaded`: slugs con algo recién subido, para que el visor relea sus anotaciones. */
-function save(items: QueuedAnnotation[], uploaded: string[] = []) {
+function save(items: Queued[], uploaded: string[] = []) {
   try {
     localStorage.setItem(KEY, JSON.stringify(items));
   } catch {
@@ -41,9 +46,12 @@ function save(items: QueuedAnnotation[], uploaded: string[] = []) {
   window.dispatchEvent(new CustomEvent(EVENT, { detail: uploaded }));
 }
 
-/** Lo capturado de una ruta que aún no viene en su relectura (pendiente o recién subido); se actualiza con cada cambio de la cola. */
-export function usePendingAnnotations(slug: string, onUploaded?: () => void) {
-  const [items, setItems] = useState<QueuedAnnotation[]>([]);
+/**
+ * Lo capturado de una ruta que aún no viene en su relectura (pendiente o recién subido), y cuánto falta subir contando
+ * las respuestas; se actualiza con cada cambio de la cola.
+ */
+export function usePendingAnnotations(slug: string, onUploaded?: () => void): [QueuedAnnotation[], number] {
+  const [items, setItems] = useState<Queued[]>([]);
   useEffect(() => {
     const read = (e?: Event) => {
       setItems(load().filter((i) => i.slug === slug));
@@ -54,13 +62,20 @@ export function usePendingAnnotations(slug: string, onUploaded?: () => void) {
     return () => window.removeEventListener(EVENT, read);
     // eslint-disable-next-line react-hooks/exhaustive-deps -- onUploaded cambia en cada render; basta el de la suscripción
   }, [slug]);
-  return items;
+  // memorizado: el visor pinta en el mapa lo capturado y no debe rehacerlo en cada lectura del GPS
+  return useMemo(() => [items.filter((i): i is QueuedAnnotation => !isResponse(i)), items.filter((i) => !i.error && !i.done).length], [items]);
 }
 
 /** Agrega a la cola e intenta subir. Una tracción en el km de otra en cola la reemplaza. */
 export function enqueueAnnotation(item: Omit<QueuedAnnotation, "id" | "updated_at" | "error" | "sent" | "done">) {
-  const same = (i: QueuedAnnotation) => item.kind === "traccion" && i.kind === "traccion" && i.routeId === item.routeId && i.km === item.km;
+  const same = (i: Queued) => !isResponse(i) && item.kind === "traccion" && i.kind === "traccion" && i.routeId === item.routeId && i.km === item.km;
   save([...load().filter((i) => !same(i)), { ...item, id: `pendiente-${crypto.randomUUID()}`, updated_at: new Date().toISOString() }]);
+  void flushAnnotations();
+}
+
+/** Contestar otra vez el mismo aviso reemplaza la respuesta en cola (y en la base, por el upsert). */
+export function answerAnnotation(item: Omit<QueuedResponse, "id" | "sent">) {
+  save([...load().filter((i) => !(isResponse(i) && i.annotationId === item.annotationId)), { ...item, id: `respuesta-${crypto.randomUUID()}` }]);
   void flushAnnotations();
 }
 
@@ -81,11 +96,18 @@ export function forgetUploaded(slug: string, ids: string[]) {
 }
 
 /** `{ id }`: subida, con el id de su fila; "red": sin señal o sin respuesta, se reintenta; otro texto: rechazo del servidor. */
-async function upload(item: QueuedAnnotation): Promise<{ id: string } | string> {
+async function upload(item: Queued): Promise<{ id: string } | string> {
   const supabase = createClient();
   const signal = AbortSignal.timeout(TIMEOUT_MS);
-  const { routeId, kind, traction, km, lng, lat, note } = item;
   const attempt = async () => {
+    // la respuesta es un upsert: repetirla tras un intento sin respuesta no duplica
+    if (isResponse(item)) {
+      const { annotationId, stillThere } = item as QueuedResponse;
+      const { error, status } = await supabase.from("route_annotation_responses").upsert({ annotation_id: annotationId, still_there: stillThere }).abortSignal(signal);
+      if (status === 0 || status === 408 || status === 429 || status >= 500) return "red";
+      return error ? error.message : { id: item.id };
+    }
+    const { routeId, kind, traction, km, lng, lat, note } = item as QueuedAnnotation;
     // con señal débil el alta llega y la respuesta no: antes de repetirla se busca (la tracción no duplica, la reemplaza el 23505)
     if (item.sent && kind !== "traccion") {
       const same = supabase.from("route_annotations").select("id").eq("route_id", routeId).eq("kind", kind).eq("km", km);
@@ -127,6 +149,12 @@ export function flushAnnotations() {
       if (result === "red") {
         save(load().map((i) => (i.id === item.id ? { ...i, sent: true } : i)));
         break;
+      }
+      if (isResponse(item)) {
+        // sin sesión, suspendida o aviso borrado: se descarta sin tarjeta de rechazo
+        if (typeof result === "string") console.warn("Respuesta descartada:", result);
+        save(load().filter((i) => i.id !== item.id), typeof result === "string" ? [] : [item.slug]);
+        continue;
       }
       // se relee: mientras subía pudo entrar otra a la cola
       const row = typeof result === "string" ? null : result;

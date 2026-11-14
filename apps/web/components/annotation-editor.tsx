@@ -3,10 +3,10 @@
 import { useMemo, useState, useTransition } from "react";
 import clsx from "clsx";
 import { Loader2, PencilLine, Trash2 } from "lucide-react";
-import { deleteAnnotation, saveAnnotation, type AnnotationResult } from "@/app/rutas/[slug]/anotaciones/actions";
+import { deleteAnnotation, reactivateAnnotation, saveAnnotation, type AnnotationResult } from "@/app/rutas/[slug]/anotaciones/actions";
 import { ElevationProfile } from "@/components/elevation-profile";
 import { TrackMap } from "@/components/route-map-lazy";
-import { kmLabel, lineKm, nearestVertex, NOTE_MAX, NOTICE, notices, TRACTION, tractionSegments, UNMARKED, type NoticeKind, type RouteAnnotation, type Traction } from "@/lib/annotations";
+import { ANSWERABLE, confirmedLabel, isHidden, kmLabel, lineKm, nearestVertex, NOTE_MAX, NOTICE, notices, TRACTION, tractionSegments, UNMARKED, type NoticeKind, type RouteAnnotation, type Traction } from "@/lib/annotations";
 import type { ProfilePoint } from "@/lib/gpx";
 import type { LineCoords } from "@/lib/maplibre";
 
@@ -211,8 +211,9 @@ export function AnnotationEditor({
                 <tr>
                   <th className="pb-2 font-semibold">#</th>
                   <th className="pb-2 font-semibold">Tipo</th>
-                  <th className="pb-2 text-right font-semibold">Km</th>
+                  <th className="pb-2 pl-2 text-right font-semibold">Km</th>
                   <th className="pb-2 pl-3 font-semibold">Nota</th>
+                  <th className="pb-2 pl-3 font-semibold">Estado</th>
                   <th className="pb-2">
                     <span className="sr-only">Acciones</span>
                   </th>
@@ -222,8 +223,9 @@ export function AnnotationEditor({
                 {list.map((a, i) => {
                   const kind = NOTICE[a.kind as NoticeKind];
                   const Icon = kind.icon;
+                  const hidden = isHidden(a);
                   return (
-                    <tr key={a.id} className={clsx(a.id === editing && "bg-primary-fixed/30")}>
+                    <tr key={a.id} className={clsx(a.id === editing && "bg-primary-fixed/30", hidden && "text-on-surface-variant/70")}>
                       <td className="py-2">
                         <span className="flex size-6 items-center justify-center rounded-full font-headline text-[11px] font-bold text-white" style={{ background: kind.color }}>
                           {i + 1}
@@ -235,8 +237,29 @@ export function AnnotationEditor({
                           {kind.label}
                         </span>
                       </td>
-                      <td className="py-2 text-right font-mono">{a.km.toFixed(1)}</td>
+                      <td className="py-2 pl-2 text-right font-mono">{a.km.toFixed(1)}</td>
                       <td className="py-2 pl-3 break-words text-on-surface-variant">{a.note}</td>
+                      <td className="py-2 pl-3 text-[11px] text-on-surface-variant">
+                        {ANSWERABLE.includes(a.kind) && (
+                          <span className="flex flex-col items-start gap-1">
+                            {!!a.confirmed && <span>{confirmedLabel(a.confirmed)}</span>}
+                            {!!a.gone && <span>{a.gone} {a.gone === 1 ? "dijo" : "dijeron"} que ya no está</span>}
+                            {hidden && (
+                              <span className="flex flex-wrap items-center gap-1.5">
+                                <span className="rounded-md bg-error/10 px-1.5 py-0.5 font-semibold text-error">Oculto</span>
+                                <button
+                                  type="button"
+                                  disabled={pending}
+                                  onClick={() => run(() => reactivateAnnotation(route, a.id, a.kind))}
+                                  className="font-semibold text-primary hover:underline disabled:opacity-50"
+                                >
+                                  Reactivar
+                                </button>
+                              </span>
+                            )}
+                          </span>
+                        )}
+                      </td>
                       <td className="py-1">{actions(a.id)}</td>
                     </tr>
                   );

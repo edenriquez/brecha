@@ -13,7 +13,7 @@ import { RouteFeedback } from "@/components/route-feedback";
 import { RouteTrack } from "@/components/route-track";
 import { ShareButton } from "@/components/share-button";
 import { TrailConditions } from "@/components/trail-conditions";
-import { kmLabel, NOTICE, notices, TRACTION, tractionSegments, UNMARKED, type RouteAnnotation } from "@/lib/annotations";
+import { confirmedLabel, kmLabel, NOTICE, notices, TRACTION, tractionSegments, UNMARKED, visible, type RouteAnnotation } from "@/lib/annotations";
 import { daysAgoLabel } from "@/lib/community";
 import { mapHref } from "@/lib/route-filters";
 import { ACTIVITY, DIFFICULTY, formatDuration, formatKm, ROUTE_TYPE } from "@/lib/routes";
@@ -52,7 +52,8 @@ export default async function RoutePage({ params }: Props) {
     getRouteShape(createAnonClient(), route.slug),
     getRouteCommunity(route.id),
     route.created_by ? getProfile(route.created_by) : null,
-    getRouteAnnotations(createAnonClient(), route.id),
+    // los avisos que dos personas seguidas dijeron que ya no están no se muestran hasta que quien subió la ruta los reactive
+    getRouteAnnotations(createAnonClient(), route.id).then(visible),
   ]);
   const difficulty = DIFFICULTY[route.difficulty];
   const target = { id: route.id, slug: route.slug };
@@ -245,6 +246,7 @@ function AuthorNotes({ annotations, totalKm, author }: { annotations: RouteAnnot
                   <p className="flex items-center gap-1.5 font-headline text-sm font-bold">
                     <Icon className="size-4" style={{ color: kind.color }} aria-hidden />
                     {kind.label}
+                    {!!a.confirmed && <span className="font-sans text-xs font-normal text-on-surface-variant">· {confirmedLabel(a.confirmed)}</span>}
                   </p>
                   {a.note && <p className="mt-0.5 text-sm text-on-surface-variant">{a.note}</p>}
                 </div>

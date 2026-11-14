@@ -14,9 +14,12 @@ export type RouteAnnotation = {
   lat: number;
   note: string | null;
   updated_at: string;
+  /** Respuestas "sigue ahí" y "ya no está" seguidas desde el último cambio; lo guardado antes en el teléfono y la cola no las traen */
+  confirmed?: number;
+  gone?: number;
 };
 
-export const ANNOTATION_COLUMNS = "id, kind, traction, km, lng, lat, note, updated_at";
+export const ANNOTATION_COLUMNS = "id, kind, traction, km, lng, lat, note, updated_at, confirmed, gone";
 export const NOTE_MAX = 280;
 
 /** Los colores de facil / moderada / dificil (globals.css). */
@@ -34,6 +37,14 @@ export const NOTICE: Record<NoticeKind, { label: string; color: string; icon: Lu
   chicken_line: { label: "Chicken line", color: "#6b4e2c", icon: GitFork },
   comentario: { label: "Comentario", color: "#414941", icon: MessageCircle },
 };
+
+/** Avisos que se confirman en el visor ("¿Sigue ahí?"); con `HIDDEN_AT` "ya no está" seguidos dejan de mostrarse hasta reactivarlos. */
+export const ANSWERABLE: AnnotationKind[] = ["obstruccion", "lodo_agua"];
+export const HIDDEN_AT = 2;
+export const isHidden = (a: RouteAnnotation) => (a.gone ?? 0) >= HIDDEN_AT;
+/** Lo que ve quien recorre la ruta: sin los avisos ocultos. El editor no filtra. */
+export const visible = (annotations: RouteAnnotation[]) => annotations.filter((a) => !isHidden(a));
+export const confirmedLabel = (n: number) => `${n} ${n === 1 ? "confirmó" : "confirmaron"}`;
 
 export const kmLabel = (km: number) => `Km ${km.toLocaleString("es-MX", { minimumFractionDigits: 1, maximumFractionDigits: 1 })}`;
 
